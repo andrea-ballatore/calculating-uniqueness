@@ -1,0 +1,50 @@
+---
+title: "Calculating uniqueness"
+author: "Andrea Ballatore"
+date: "27/03/2022"
+output: html_document
+---
+# Setup 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Uniqueness
+
+```{r uniq}
+
+FUNCTIONS ETC
+
+```
+
+# Case studies
+
+## Greater London (land use and Points of Interest)
+
+```{r}
+
+```
+
+## Greater London (boroughs)
+
+You can also embed plots, for example:
+
+```{r}
+plot(pressure)
+```
+
+## Countries (World Bank data)
+
+```{r}
+
+```
+
+## EU (Eurostat data)
+
+
+```{r}
+
+```
+
+End of notebook

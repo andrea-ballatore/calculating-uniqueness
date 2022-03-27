@@ -37,3 +37,6 @@ vignettes/*.pdf
 
 # R Environment Variables
 .Renviron
+data/london/.DS_Store
+data/.DS_Store
+.DS_Store
