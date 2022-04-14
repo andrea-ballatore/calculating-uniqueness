@@ -8,13 +8,17 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(moments)
+library(corrr)
+library(sf)
 ```
 
 # Uniqueness
 
 ```{r uniq}
 
-FUNCTIONS ETC
+# FUNCTIONS ETC
 
 ```
 
@@ -28,11 +32,38 @@ FUNCTIONS ETC
 
 ## Greater London (boroughs)
 
-You can also embed plots, for example:
+```{r}
+lnd_boro = st_read('data/london/london_borough_profiles_2015/london_boroughs_profiles_2015.geojson')
+# select variables
+print(names(lnd_boro))
+lnd_boro = lnd_boro %>% select(name, gla_population_estimate_2017, average_age_2017, pc_of_resident_population_born_abroad_2015, employment_rate_pc_2015, gross_annual_pay_2016, proportion_of_seats_won_by_conservatives_in_2014_election, proportion_of_seats_won_by_labour_in_2014_election, median_house_price_2015)
+
+plot(lnd_boro)
+```
+### Prep data
 
 ```{r}
-plot(pressure)
+# get correlations
+lnd_boro_corr = lnd_boro %>% st_drop_geometry() %>% select(-name) %>% correlate(method='kendall') %>% stretch()
+# observe high correlations
+lnd_boro_corr %>% filter(r > .5 | r < -.5)
+# remove Labour variable
+lnd_boro = lnd_boro %>% select(-proportion_of_seats_won_by_labour_in_2014_election)
 ```
+
+```{r}
+TODO:
+# get skewness
+#lnd_boro_skew = 
+lnd_boro %>% st_drop_geometry() %>% ()
+
+%>% select(-name) %>%
+  summarise(across(everything(), skewness) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "skewness")
+  
+lnd_boro_skew
+```
+
 
 ## Countries (World Bank data)
 
