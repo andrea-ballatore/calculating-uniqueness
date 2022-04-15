@@ -10,15 +10,23 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(moments)
+library(knitr)
 library(corrr)
+library(pastecs)
+library(coop)
 library(sf)
 ```
 
-# Uniqueness
+# Uniqueness functions
 
 ```{r uniq}
 
 # FUNCTIONS ETC
+
+range01 <- function(x){
+  (x-min(x,na.rm = T))/(max(x,na.rm = T)-min(x,na.rm = T))
+}
+
 
 ```
 
@@ -36,15 +44,20 @@ library(sf)
 lnd_boro = st_read('data/london/london_borough_profiles_2015/london_boroughs_profiles_2015.geojson')
 # select variables
 print(names(lnd_boro))
-lnd_boro = lnd_boro %>% select(name, gla_population_estimate_2017, average_age_2017, pc_of_resident_population_born_abroad_2015, employment_rate_pc_2015, gross_annual_pay_2016, proportion_of_seats_won_by_conservatives_in_2014_election, proportion_of_seats_won_by_labour_in_2014_election, median_house_price_2015)
+lnd_boro = lnd_boro %>% select(gss, name, population_density_per_hectare_2017, average_age_2017, pc_of_resident_population_born_abroad_2015, employment_rate_pc_2015, modelled_household_median_income_estimates_2012_13, proportion_of_seats_won_by_conservatives_in_2014_election, proportion_of_seats_won_by_labour_in_2014_election, median_house_price_2015) %>% rename(id = gss)
+plot(lnd_boro %>% select(-id,-name), border='white')
 
-plot(lnd_boro)
+# integrate missing data
+# from https://data.gov.uk/dataset/248f5f04-23cf-4470-9216-0d0be9b877a8/london-borough-profiles-and-atlas/datafile/1e5d5226-a1a7-4097-afbf-d3bd39226c39/preview
+#lnd_boro[lnd_boro$name == "Kensington and Chelsea", "gross_annual_pay_2016"] = 63620
 ```
 ### Prep data
 
+Find problematic variables.
+
 ```{r}
 # get correlations
-lnd_boro_corr = lnd_boro %>% st_drop_geometry() %>% select(-name) %>% correlate(method='kendall') %>% stretch()
+lnd_boro_corr = lnd_boro %>% st_drop_geometry() %>% select(-name,-id) %>% correlate(method='kendall') %>% stretch()
 # observe high correlations
 lnd_boro_corr %>% filter(r > .5 | r < -.5)
 # remove Labour variable
@@ -52,17 +65,88 @@ lnd_boro = lnd_boro %>% select(-proportion_of_seats_won_by_labour_in_2014_electi
 ```
 
 ```{r}
-TODO:
-# get skewness
-#lnd_boro_skew = 
-lnd_boro %>% st_drop_geometry() %>% ()
-
-%>% select(-name) %>%
-  summarise(across(everything(), skewness) %>%
-  pivot_longer(everything(), names_to = "variable", values_to = "skewness")
-  
-lnd_boro_skew
+lnd_boro_desc_stats = t(stat.desc(lnd_boro %>% st_drop_geometry() %>% select(-id,-name), norm=T))
+lnd_boro_desc_stats
 ```
+
+```{r}
+# histograms to see normality
+ggplot(gather(lnd_boro %>% st_drop_geometry() %>% select(-name,-id)), aes(value)) + 
+    geom_histogram(bins = 20) + 
+    facet_wrap(~key, scales = 'free_x')
+```
+The only variable whose skewness is a concern is `median_house_price_2015`. It will be normalised with log10.
+
+```{r}
+# normalise and scale
+lnd_boro$median_house_price_2015_log10 = log10(lnd_boro$median_house_price_2015+1)
+lnd_boro = lnd_boro %>% select(-median_house_price_2015)
+
+# skewness is now acceptable
+skewness(lnd_boro$median_house_price_2015_log10)
+```
+
+Scale all numeric variables.
+
+```{r}
+lnd_boro_scaled = lnd_boro %>% mutate_if(is.numeric, scale) %>% mutate_if(is.numeric, range01)
+lnd_boro_scaled %>% head(5)
+```
+
+Multidimensional scaling of boroughs.
+
+```{r}
+mds <- lnd_boro %>% select(-name,-id) %>% st_drop_geometry() %>%
+  dist() %>% cmdscale() %>% as_tibble()
+colnames(mds) <- c("Dim1", "Dim2")
+mds$name = lnd_boro_scaled$name
+
+# plot MDS
+ggplot(mds, aes(x=Dim1, y=Dim2)) +
+  geom_point() +
+  geom_text(
+    label=mds$name, 
+    nudge_x = .25, nudge_y = .25, 
+    check_overlap = T
+  )
+rm(mds)
+```
+
+
+### Uniqueness
+
+Calculate uniqueness of boroughs based on all variables.
+
+```{r}
+n_var = ncol(lnd_boro_scaled %>% st_drop_geometry() %>% select(-name,-id))
+sim_matrix = tcosine(lnd_boro_scaled %>% st_drop_geometry() %>% select(-name,-id)) %>% as_tibble()
+
+# calculate cosine for cases with missing values
+missing_cases = rowSums(is.na(sim_matrix))
+missing_cases_row_idx = which(missing_cases == (ncol(sim_matrix)-1))
+for (row_idx in missing_cases_row_idx){
+  for (other_row_idx in seq(nrow(lnd_boro_scaled))){
+    pair_cosine = tcosine(lnd_boro_scaled[c(row_idx,other_row_idx),] %>% st_drop_geometry() %>% select_if(is.numeric) %>% select_if(~ !any(is.na(.))))
+    print(lnd_boro_scaled[c(row_idx, other_row_idx),])
+    print(pair_cosine)
+    TODO: save results
+  }
+}
+
+lnd_boro_uniq = lnd_boro_scaled
+lnd_boro_uniq$sim_sum = rowSums(sim_matrix, na.rm = T)-1
+lnd_boro_uniq$sim_sum[lnd_boro_uniq$sim_sum == 0] <- NA
+lnd_boro_uniq$uniq = lnd_boro_uniq$sim_sum / nrow(lnd_boro_uniq)
+
+print(summary(lnd_boro_uniq$sim_sum))
+print(summary(lnd_boro_uniq$uniq))
+```
+
+
+```{r}
+lnd_boro_uniq %>% select(uniq) %>% plot(border = 'white')
+```
+
 
 
 ## Countries (World Bank data)
