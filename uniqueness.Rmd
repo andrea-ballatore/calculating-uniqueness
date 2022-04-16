@@ -105,9 +105,9 @@ for (row_n in seq(0,100,100)){
     uniq = calc_uniqueness(rand_tib, method)
     #print(paste('corr(uniq,entropy) =', 
     #      round(cor(uniq$uniqueness$uniq, uniq$uniqueness$entropy),3)))
-    uniq = round(uniq$uniqueness$uniq,3)
+    uniq = round(uniq$uniqueness$uniq,4)
     res = bind_rows(res, tibble(trial=trial, method=method, row_n = row_n, col_n = col_n,
-            umin = min(uniq), umed = median(uniq), umax = max(uniq),
+            umin = min(uniq), umed = median(uniq), umax = max(uniq), uiqr = IQR(uniq),
             uskew = round(skewness(uniq),2), ukurt = round(kurtosis(uniq),2)))
   }
 }
