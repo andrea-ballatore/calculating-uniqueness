@@ -30,7 +30,9 @@ calc_uniqueness = function(tib, sim_method, handle_missing_values=T){
   # get only numeric columns
   indata = tib %>% select_if(is.numeric)
   stopifnot(ncol(indata) > 1)
-  stopifnot(sim_method %in% c('cosine','euclidean'))
+  
+  stopifnot(sim_method %in% c('cosine', "euclidean", "maximum", "manhattan",
+                              "canberra", "binary", "minkowski"))
   
   # calculate entropy for each row: 
   #   high = uniform data, low = some attribute high/low
@@ -41,10 +43,11 @@ calc_uniqueness = function(tib, sim_method, handle_missing_values=T){
     scaled_indata = indata %>% mutate_if(is.numeric, range01)
     # calculate cosine similarities between rows
     sim_matrix = tcosine(scaled_indata) %>% as_tibble()
-  }
-  if (sim_method == 'euclidean'){
+  } else {
+    stopifnot(sim_method %in% c("euclidean", "maximum", "manhattan", "canberra", 
+              "binary", "minkowski"))
     # calculate cosine similarities between rows
-    edist = dist(indata, diag=T, upper=T) %>% as.matrix() %>% as_tibble()
+    edist = dist(indata, diag=T, upper=T, method=sim_method) %>% as.matrix() %>% as_tibble()
     stopifnot(edist >= 0)
     sim_matrix = 1/(1+edist)
   }
@@ -92,10 +95,10 @@ range01 <- function(x){
 
 # synthetic data
 res = tibble()
-for (method in c('cosine','euclidean'))
+for (method in c('cosine','euclidean','minkowski','manhattan'))
 for (trial in seq(10))
-for (row_n in seq(0,1000,200)){
-  for (col_n in seq(0,100,10)){
+for (row_n in seq(0,100,100)){
+  for (col_n in seq(0,100,100)){
     if (row_n == 0 | col_n == 0) next()
     #print(paste('Random matrix:', method,', obs', row_n, 'dim', col_n))
     rand_tib = as_tibble(matrix(rnorm(row_n*col_n), nrow=row_n))
