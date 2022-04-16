@@ -13,6 +13,7 @@ library(tidyverse)
 library(moments)
 library(knitr)
 library(corrr)
+library(entropy)
 library(pastecs)
 library(coop)
 library(sf)
@@ -22,11 +23,100 @@ library(sf)
 
 ```{r uniq}
 
-# FUNCTIONS ETC
+#' Main function to calculate uniqueness 
+#' @tib input data tibble, including numeric and non-numeric columns
+#' @return a tibble with results and the similarity matrix between all rows.
+calc_uniqueness = function(tib, sim_method, handle_missing_values=T){
+  # get only numeric columns
+  indata = tib %>% select_if(is.numeric)
+  stopifnot(ncol(indata) > 1)
+  stopifnot(sim_method %in% c('cosine','euclidean'))
+  
+  # calculate entropy for each row: 
+  #   high = uniform data, low = some attribute high/low
+  #entropies = apply(X = indata, MARGIN = 1, FUN = function(x) entropy(x[!is.na(x)]))
+  
+  if (sim_method == 'cosine'){
+    # scale columns between 0 and 1
+    scaled_indata = indata %>% mutate_if(is.numeric, range01)
+    # calculate cosine similarities between rows
+    sim_matrix = tcosine(scaled_indata) %>% as_tibble()
+  }
+  if (sim_method == 'euclidean'){
+    # calculate cosine similarities between rows
+    edist = dist(indata, diag=T, upper=T) %>% as.matrix() %>% as_tibble()
+    stopifnot(edist >= 0)
+    sim_matrix = 1/(1+edist)
+  }
+  #View(sim_matrix)
+  stopifnot(sim_matrix >= 0 & sim_matrix <= 1)
+  
+  if (handle_missing_values){
+    # calculate cosine for cases with missing values
+    missing_cases = rowSums(is.na(sim_matrix))
+    missing_cases_row_idx = which(missing_cases == (ncol(sim_matrix)-1))
+    #print(paste0('Missing cases N = ', length(missing_cases_row_idx)))
+    for (row_idx in missing_cases_row_idx){
+      for (other_row_idx in seq(nrow(indata))){
+        non_null_pair = indata[c(row_idx,other_row_idx),] %>% 
+          select_if(is.numeric) %>% select_if(~ !any(is.na(.)))
+        n_pair_vars = ncol(non_null_pair)
+        pair_cosine = tcosine(non_null_pair)
+        sim_matrix[row_idx, other_row_idx] = pair_cosine[1,2]
+        sim_matrix[other_row_idx, row_idx] = pair_cosine[2,1]
+      }
+    }
+  }
+  uniq_df = tib
+  uniq_df$na_count = rowSums(is.na(indata))
+  # calculate uniqueness
+  uniq_df$sim_sum = rowSums(sim_matrix, na.rm=T)-1
+  uniq_df$sim_sum[uniq_df$sim_sum == 0] <- NA
+  uniq_df$uniq = 1 - (uniq_df$sim_sum / nrow(uniq_df))
+  # save entropy in results
+  #uniq_df$entropy = entropies
+  #View(uniq_df)
+  #print(summary(uniq_df$uniq))
+  stopifnot(uniq_df$uniq >= 0 & uniq_df$uniq <= 1)
+  return(list(uniqueness=uniq_df, sim_matrix=sim_matrix))
+}
 
 range01 <- function(x){
   (x-min(x,na.rm = T))/(max(x,na.rm = T)-min(x,na.rm = T))
 }
+```
+
+# Synthetic data
+
+```{r}
+
+# synthetic data
+res = tibble()
+for (method in c('cosine','euclidean'))
+for (trial in seq(10))
+for (row_n in seq(0,1000,200)){
+  for (col_n in seq(0,100,10)){
+    if (row_n == 0 | col_n == 0) next()
+    #print(paste('Random matrix:', method,', obs', row_n, 'dim', col_n))
+    rand_tib = as_tibble(matrix(rnorm(row_n*col_n), nrow=row_n))
+    uniq = calc_uniqueness(rand_tib, method)
+    #print(paste('corr(uniq,entropy) =', 
+    #      round(cor(uniq$uniqueness$uniq, uniq$uniqueness$entropy),3)))
+    uniq = round(uniq$uniqueness$uniq,3)
+    res = bind_rows(res, tibble(trial=trial, method=method, row_n = row_n, col_n = col_n,
+            min(uniq), median(uniq), max(uniq), 
+            round(skewness(uniq),2), round(kurtosis(uniq),2)))
+  }
+}
+View(res)
+
+TODO
+ggplot(uniq$uniqueness, aes(x=uniq)) + xlim(0,1) + xlab("Uniqueness index") + 
+  geom_histogram(color="white", fill="lightblue", bins = 20)
+
+ggplot(uniq$uniqueness, aes(x=entropy)) + xlab("Entropy") + 
+  geom_histogram(color="white", fill="lightgreen", bins = 10)
+
 
 
 ```
@@ -114,38 +204,22 @@ rm(mds)
 ```
 
 
-### Uniqueness
+### Calc uniqueness
 
 Calculate uniqueness of boroughs based on all variables.
 
 ```{r}
-n_var = ncol(lnd_boro_scaled %>% st_drop_geometry() %>% select(-name,-id))
-sim_matrix = tcosine(lnd_boro_scaled %>% st_drop_geometry() %>% select(-name,-id)) %>% as_tibble()
+#indata = lnd_boro_scaled %>% st_drop_geometry() %>% select(-name,-id)
 
-# calculate cosine for cases with missing values
-missing_cases = rowSums(is.na(sim_matrix))
-missing_cases_row_idx = which(missing_cases == (ncol(sim_matrix)-1))
-for (row_idx in missing_cases_row_idx){
-  for (other_row_idx in seq(nrow(lnd_boro_scaled))){
-    pair_cosine = tcosine(lnd_boro_scaled[c(row_idx,other_row_idx),] %>% st_drop_geometry() %>% select_if(is.numeric) %>% select_if(~ !any(is.na(.))))
-    print(lnd_boro_scaled[c(row_idx, other_row_idx),])
-    print(pair_cosine)
-    TODO: save results
-  }
-}
 
-lnd_boro_uniq = lnd_boro_scaled
-lnd_boro_uniq$sim_sum = rowSums(sim_matrix, na.rm = T)-1
-lnd_boro_uniq$sim_sum[lnd_boro_uniq$sim_sum == 0] <- NA
-lnd_boro_uniq$uniq = lnd_boro_uniq$sim_sum / nrow(lnd_boro_uniq)
+#openxlsx::write.xlsx(lnd_boro_uniq %>% st_drop_geometry() %>% mutate_if(is.numeric, round, 4), 'analysis/london_boroughs_scaled_uniqueness.xlsx')
 
-print(summary(lnd_boro_uniq$sim_sum))
-print(summary(lnd_boro_uniq$uniq))
 ```
 
+### Viz uniqueness 
 
 ```{r}
-lnd_boro_uniq %>% select(uniq) %>% plot(border = 'white')
+lnd_boro_uniq %>% select(uniq) %>% plot(border = 'white', nbreaks = 10, breaks='pretty')
 ```
 
 
