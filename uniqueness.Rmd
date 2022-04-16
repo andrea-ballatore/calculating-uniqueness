@@ -76,6 +76,9 @@ calc_uniqueness = function(tib, sim_method, handle_missing_values=T){
   uniq_df$sim_sum = rowSums(sim_matrix, na.rm=T)-1
   uniq_df$sim_sum[uniq_df$sim_sum == 0] <- NA
   uniq_df$uniq = 1 - (uniq_df$sim_sum / nrow(uniq_df))
+  uniq_df$uniq_rank = rank(-uniq_df$uniq)
+  uniq_df$uniq_z = (uniq_df$uniq - mean(uniq_df$uniq))/sd(uniq_df$uniq)
+  uniq_df$uniq_dist_avg = uniq_df$uniq - mean(uniq_df$uniq)
   # save entropy in results
   #uniq_df$entropy = entropies
   #View(uniq_df)
@@ -87,28 +90,71 @@ calc_uniqueness = function(tib, sim_method, handle_missing_values=T){
 range01 <- function(x){
   (x-min(x,na.rm = T))/(max(x,na.rm = T)-min(x,na.rm = T))
 }
+
+#' @return a tibble with random values following a given distribution
+gen_random_matrix = function(distrib, n_row, n_col, scale=1, group_split=.2){
+  print(paste('gen_random_matrix',distrib, n_row, n_col, scale))
+  stopifnot(distrib %in% c('normal','uniform','groups'))
+  stopifnot(n_row > 0 && n_col > 0)
+  stopifnot(group_split > 0 && group_split < 1)
+  if (distrib=='normal'){
+    rand = as_tibble(matrix(rnorm(n_row*n_col), nrow=n_row))
+    return(rand*scale)
+  }
+  if (distrib=='uniform'){
+    return(as_tibble(matrix(runif(n_row*n_col), nrow=n_row))*scale)
+  }
+  if (distrib=='groups'){
+    # create data with some common and rare groups
+    common_tib = gen_random_matrix('normal', n_row * (1-group_split), n_col, scale)
+    rare_tib =   gen_random_matrix('normal', n_row * group_split, n_col, scale*1000)
+    tib = bind_rows(common_tib, rare_tib)
+    return(tib %>% sample_frac(1))
+  }
+}
 ```
 
 # Synthetic data
 
 ```{r}
 
+#tibs = list(gen_random_matrix('normal', 10, 5),
+#  gen_random_matrix('uniform', 10, 5),
+#  gen_random_matrix('groups', 10, 5, 1))
+#for (t in tibs){
+#  u = calc_uniqueness(t, 'euclidean')
+#  View(u$uniq)
+#}
+
+#t = gen_random_matrix('normal', 10, 5)
+#u = calc_uniqueness(t, 'euclidean')
+#View(u$uniqueness)
+#ggplot(u$uniqueness, aes(x=uniq_dist_avg)) + xlab("uniq_dist_avg") + 
+#  geom_histogram(color="white", fill="lightgreen", bins = 10)#
+
+#ggplot(u$uniqueness, aes(x=uniq)) + #xlab("uniq_dist_avg") + 
+#  geom_histogram(color="white", fill="gray", bins = 10)
+
 # synthetic data
 res = tibble()
-for (method in c('cosine','euclidean','minkowski','manhattan'))
+for (method in c('cosine','euclidean','manhattan')) # 'minkowski',
+for (rand_data in c('normal','uniform','groups'))
+for (data_scale in c(1,100,10000))
 for (trial in seq(10))
-for (row_n in seq(0,100,100)){
-  for (col_n in seq(0,100,100)){
+for (row_n in seq(0,10,10)){
+  for (col_n in seq(0,5,5)){
     if (row_n == 0 | col_n == 0) next()
-    #print(paste('Random matrix:', method,', obs', row_n, 'dim', col_n))
-    rand_tib = as_tibble(matrix(rnorm(row_n*col_n), nrow=row_n))
+    rand_tib = gen_random_matrix(rand_data, row_n, col_n, data_scale)
     uniq = calc_uniqueness(rand_tib, method)
     #print(paste('corr(uniq,entropy) =', 
     #      round(cor(uniq$uniqueness$uniq, uniq$uniqueness$entropy),3)))
-    uniq = round(uniq$uniqueness$uniq,4)
-    res = bind_rows(res, tibble(trial=trial, method=method, row_n = row_n, col_n = col_n,
-            umin = min(uniq), umed = median(uniq), umax = max(uniq), uiqr = IQR(uniq),
-            uskew = round(skewness(uniq),2), ukurt = round(kurtosis(uniq),2)))
+    uniq_dist_avg = round(uniq$uniqueness$uniq_dist_avg, 4)
+    res = bind_rows(res, tibble(trial=trial, 
+            rand_data=rand_data, data_scale=data_scale, method=method, 
+            row_n = row_n, col_n = col_n,
+            umin = min(uniq_dist_avg), umed = median(uniq_dist_avg), 
+            umax = max(uniq_dist_avg), uiqr = IQR(uniq_dist_avg),
+            uskew = round(skewness(uniq_dist_avg),2), ukurt = round(kurtosis(uniq_dist_avg),2)))
   }
 }
 View(res)
