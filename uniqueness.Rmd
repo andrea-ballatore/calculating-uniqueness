@@ -11,14 +11,8 @@ output:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
-library(tidyverse)
-library(moments)
-library(knitr)
-library(corrr)
-library(entropy)
-library(pastecs)
-library(coop)
-library(sf)
+pacman::p_load(tidyverse, moments, knitr, corrr, entropy, pastecs, coop, sf, 
+               outliers, mvoutlier, mahalanobis)
 
 #' @return x rescaled between 0 and 1
 range01 <- function(x){
@@ -40,7 +34,7 @@ gen_const_matrix = function(n_row, n_col, val){
 #' Generate random data for testing.
 #' @return a tibble with random values following a given distribution
 gen_random_matrix = function(distrib, n_row, n_col, scale=1, group_split=.2){
-  print(paste('gen_random_matrix',distrib, n_row, n_col, scale))
+  #print(paste('gen_random_matrix',distrib, n_row, n_col, scale))
   stopifnot(distrib %in% c('normal','uniform','2groups','3groups'))
   stopifnot(n_row > 0 && n_col > 0)
   stopifnot(group_split > 0 && group_split < 1)
@@ -71,23 +65,110 @@ gen_random_matrix = function(distrib, n_row, n_col, scale=1, group_split=.2){
 #' Descriptive statistics
 #' @return tibble with a row with descriptive stats about x.
 desc_stats <- function(x){
- tibble(
-  n = length(x),
-  min = min(x),
-  med = median(x),
-  mean = mean(x),
-  max = max(x),
-  skewness = round(skewness(x),3),
-  iqr = round(IQR(x),3),
-  shapiro_w = shapiro.test(x)$stat,
-  shapiro_p = round(shapiro.test(x)$p,5)
- )
+  shap_x = x
+  if (length(x) > 5000){
+    shap_x = sample(x, 5000)
+  }
+  
+  tibble(
+    n = length(x),
+    min = min(x),
+    med = median(x),
+    mean = mean(x),
+    max = max(x),
+    skewness = round(skewness(x),3),
+    iqr = round(IQR(x),3),
+    shapiro_w = shapiro.test(shap_x)$stat,
+    shapiro_p = round(shapiro.test(shap_x)$p,5)
+  )
 }
+```
+
+# Sandbox
+
+```{r include=T}
+# generate matrices
+set.seed(50)
+unitib = gen_random_matrix('uniform', 1000, 10)
+normtib = gen_random_matrix('normal', 8, 3)
+gtib = gen_random_matrix('2groups', 100, 3, group_split = .2)
+zerotib = gen_const_matrix(8,3,0)
+onetib = gen_const_matrix(8,3,1)
+
+# test uniqueness
+tib = unitib
+
+if (F){
+  # scale variables 0 1
+  #tib = tib %>% mutate_if(is.numeric, range01)
+  
+}
+#cos = tcosine(tib)
+
+#mat = gen_random_matrix('normal', 1000, 100)
+#bigdist(as.matrix(mat), 'analysis/dist_matrix.tmp', method='euclidean')
+#dist_uniq()
+
+#utib$sum_dists_div = sum_dists / nrow(utib)
+#utib$sum_dists_log = log10(utib$sum_dists+1)
+#utib$sum_dists_sqrt = sqrt(utib$sum_dists)
+#n = 3
+#utib$sum_dists_nrt = utib$sum_dists ^ (1 / n)
+#utib$uniq_lin = 1/(1+utib$sum_dists)
+#utib$uniq_log = 1/(1+utib$sum_dists_log)
+#utib$uniq_sqrt = 1/(1+utib$sum_dists_sqrt)
+#utib$sum_cos = rowSums(cos)
+#utib$sum_cos_pos = utib$sum_cos-min(utib$sum_cos)
+#utib$sum_cos_log = log10(utib$sum_cos+1)
+
+#View(round(utib,4))
+#summary(utib)
+
+# plot histograms
+#tib_long <- utib %>% pivot_longer(colnames(utib)) %>% as_tibble()
+#gp1 <- ggplot(tib_long, aes(x = value)) +    # Draw each column as histogram
+  #geom_histogram(bins = 10) + 
+#  geom_density(adjust = 1/2) + 
+#  facet_wrap(~ name, scales = "free_x")
+#print(gp1)
+
+# characteristics of uniq to be saved for diagnostic
+#x = scale(utib$sum_dists)
+
+#desc_stats(x)
+```
+
+
+# Outlier detection
+
+## Univariate OD
+
+This is similar to outlier detection, in the sense of detection of extreme values, and not of measurement errors. 
+For a single variable, there are well-known methods, e.g., boxplots, n StDev, etc.
+
+"Enderlein (1987) goes even further as the author considers outliers as values that deviate so much from other observations one might suppose a different underlying sampling mechanism.
+... it sometimes makes sense to formally distinguish two classes of outliers: (i) extreme values and (ii) mistakes."
+https://statsandr.com/blog/outliers-detection-in-r
+
+## Multivariate OD
+
+In a multi-variate context, the outliers we are interested in are *rare combinations of values*. Individually, the values of each variable might not be extreme, but the combination appears relatively far from others.
+
+"The adjusted quantile plot function of the mvoutlier package will solve for and order the squared Mahalanobis Distances for the given observations and plot them against the empirical Chi-Squared distribution function of these values."
+https://rpubs.com/Treegonaut/301942
+
+
+```{r}
+# use mvoutlier
+indf = as.data.frame(gen_random_matrix('2groups', 20, 5))
+
+outliers <- aq.plot(indf, delta=qchisq(0.975, df = ncol(indf)),
+                    quan = 1/2, alpha = 0.05)
 ```
 
 # Uniqueness
 
-## Single variable
+## Univariate uniqueness
 
 Uniqueness can be thought of as $1 - p$, where p is the probability of encountering a particular observation from random extractions from a set.
 
@@ -103,25 +184,75 @@ uk_landcover$uniq = 1 - uk_landcover$p
 uk_landcover
 ```
 
-## Multi-variate
+To make it more interpretable, we can use the z score. This way, more unique observations emerge from the data.
+
+```{r}
+uk_landcover$uniq_z = round(zscore(uk_landcover$uniq),2)
+
+uk_landcover
+```
+
+We can think of uniqueness as a deviation from the uniform distribution.
+If all types of observation occur at the same probability, it is not possible to calculate a meaningful uniqueness score ($z$ is NA).
+
+```{r}
+uniform_tib = tibble(cat=c('cat1','cat2','cat3','cat4'), pc=1/4, uniq=1-1/4)
+uniform_tib$uniq_z = zscore(uniform_tib$uniq)
+print(uniform_tib)
+```
+
+We can use measures of entropy to see if the data has heterogeneity that can be used to quantify uniqueness. High entropy means low heterogeneity (no observation will be unique) and vice-versa.
+
+```{r}
+print(paste('Entropy of uniform data', round(entropy(uniform_tib$pc),2)))
+print(paste('Entropy of heterogeneous data', round(entropy(uk_landcover$pc),2)))
+```
+
+## Multi-variate uniqueness
 
 The multivariate case is more interesting and challenging. It is useful for exploratory data analysis (EDA).
 
+In this example, we consider four observations along two dimensions. The geometric interpretation of uniqueness of observation $a$ in this case is $u_a = \sum dist(a,b)$. To make the results more interpretable, we can obtain the $z$ scores. It is possible to observe visually that point 1 is the most spatially isolated, while point 2 is the most central to the dataset and therefore has the lowest uniqueness.
+
 ```{r}
-multiv_tib = as_tibble(matrix(c(-1,0,1,-1,0,1), ncol = 2))
+multiv_tib = as_tibble(matrix(c(-1,0,1,0,-1,0,1,1), ncol = 2))
 print(multiv_tib)
+
+# plot
+ggplot(multiv_tib, aes(x=V1, y=V2, label=rownames(multiv_tib))) + theme(aspect.ratio = 1) +
+  geom_point(size=3, colour='blue', fill='blue') + geom_text(nudge_y = .1) + 
+  ggtitle('Location of points')
 
 # get distance matrix
 dist_mat = as.matrix(dist(multiv_tib, diag = T, upper = T))
 print(dist_mat)
 # sum distances
-rowSums(dist_mat)
+multiv_tib$sum_dist = round(rowSums(dist_mat),2)
+multiv_tib$sum_dist_z = round(zscore(multiv_tib$sum_dist),2)
 
-ggplot(multiv_tib, aes(x=V1, y=V2)) + theme(aspect.ratio = 1) +
-  geom_point(size=3, colour='blue', fill='blue')
+# plot uniqueness
+ggplot(multiv_tib, aes(x=V1, y=V2, label=sum_dist)) + theme(aspect.ratio = 1) +
+  geom_point(size=3, colour='green', fill='green') + geom_text(nudge_y = .1) + 
+  ggtitle('Sum of distances to other points')
+
+# plot z scores of uniqueness 
+ggplot(multiv_tib, aes(x=V1, y=V2, label=sum_dist_z)) + theme(aspect.ratio = 1) +
+  geom_point(size=3, colour='green', fill='green') + geom_text(nudge_y = .1) + 
+  ggtitle('Sum of distances to other points (z scores)')
+
 ```
 
+Define uniqueness calculations
+
 ```{r uniq}
+
+#' Find a sample size to produce a distance matrix that is manageable in memory
+find_sample_sz = function(n_row, n_col, max_dist_size){
+  while(((n_col*n_row)^2) > max_dist_size){
+    n_row = n_row - 1
+  }
+  return(n_row)
+}
 
 #' Calculate uniqueness based on distance in multi-dimensional space.
 #' @param tib
@@ -130,12 +261,22 @@ ggplot(multiv_tib, aes(x=V1, y=V2)) + theme(aspect.ratio = 1) +
 dist_uniq = function(tib, dist_method){
   # scale input variables mean + sd
   tib = tib %>% mutate_if(is.numeric, scale)
+  
+  # check memory limit for distance matrix
+  max_matrix_sz = 1e8
+  #print(dim(tib))
+  sample_rows = find_sample_sz(nrow(tib), ncol(tib), max_matrix_sz)
+  if (nrow(tib) > sample_rows){
+    warning(paste("Distance matrix would be too large, using a sample N =",sample_rows))
+    tib = tib %>% sample_n(sample_rows)
+  }
   sum_dists = rowSums(as_tibble(as.matrix(dist(tib, diag = T, upper = T, method = dist_method))))
   utib = tib
   utib$sum_dists = sum_dists
   utib$sum_dists_z = zscore(sum_dists)
   utib
 }
+
 
 #' Main function to calculate uniqueness 
 #' @tib input data tibble, including numeric and non-numeric columns
@@ -200,130 +341,71 @@ OLD_calc_uniqueness = function(tib, sim_method, handle_missing_values=T){
   stopifnot(uniq_df$uniq >= 0 & uniq_df$uniq <= 1)
   return(list(uniqueness=uniq_df, sim_matrix=sim_matrix))
 }
-
 ```
 
-# Sandbox
+## High dimensionality
 
-```{r include=T}
-# generate matrices
-set.seed(50)
-unitib = gen_random_matrix('uniform', 1000, 10)
-normtib = gen_random_matrix('normal', 8, 3)
-gtib = gen_random_matrix('2groups', 100, 3, group_split = .2)
-zerotib = gen_const_matrix(8,3,0)
-onetib = gen_const_matrix(8,3,1)
+On high dimensional data, the interpretation of $u$ is less immediate.
+Therefore, it is useful to observe the behaviour of the uniqueness measure $u$ 
+through a Monte Carlo method.
 
-# test uniqueness
-tib = unitib
-
-if (F){
-  # scale variables 0 1
-  #tib = tib %>% mutate_if(is.numeric, range01)
-  
-}
-#cos = tcosine(tib)
-
-#utib$sum_dists_div = sum_dists / nrow(utib)
-#utib$sum_dists_log = log10(utib$sum_dists+1)
-#utib$sum_dists_sqrt = sqrt(utib$sum_dists)
-#n = 3
-#utib$sum_dists_nrt = utib$sum_dists ^ (1 / n)
-#utib$uniq_lin = 1/(1+utib$sum_dists)
-#utib$uniq_log = 1/(1+utib$sum_dists_log)
-#utib$uniq_sqrt = 1/(1+utib$sum_dists_sqrt)
-#utib$sum_cos = rowSums(cos)
-#utib$sum_cos_pos = utib$sum_cos-min(utib$sum_cos)
-#utib$sum_cos_log = log10(utib$sum_cos+1)
-
-#View(round(utib,4))
-#summary(utib)
-
-# plot histograms
-#tib_long <- utib %>% pivot_longer(colnames(utib)) %>% as_tibble()
-#gp1 <- ggplot(tib_long, aes(x = value)) +    # Draw each column as histogram
-  #geom_histogram(bins = 10) + 
-#  geom_density(adjust = 1/2) + 
-#  facet_wrap(~ name, scales = "free_x")
-#print(gp1)
-
-# characteristics of uniq to be saved for diagnostic
-#x = scale(utib$sum_dists)
-
-#desc_stats(x)
-```
-
+A core idea is that data with uniformly and normally distributed variables can still produce high values of $u$, generating false positives in the search for unique observations.
+The Shapiro-Wilk test on $u$ consistently returns low W on heterogeneous distributions with actual groups and high W on homogeneous data, regardless of scale.
 
 ```{r}
-
-```
-
-# Synthetic data
-
-- Simple uniqueness Uniq as z score of sum of distances
-- Shapiro-Wilk Test on Uniq: low W on heterogenous distribution; high W on homog.
-
-```{r}
-
-
-#tibs = list(gen_random_matrix('normal', 10, 5),
-#  gen_random_matrix('uniform', 10, 5),
-#  gen_random_matrix('groups', 10, 5, 1))
-#for (t in tibs){
-#  u = calc_uniqueness(t, 'euclidean')
-#  View(u$uniq)
-#}
-
 #t = gen_random_matrix('normal', 10, 5)
 #u = calc_uniqueness(t, 'euclidean')
 #View(u$uniqueness)
 #ggplot(u$uniqueness, aes(x=uniq_dist_avg)) + xlab("uniq_dist_avg") + 
 #  geom_histogram(color="white", fill="lightgreen", bins = 10)#
-
 #ggplot(u$uniqueness, aes(x=uniq)) + #xlab("uniq_dist_avg") + 
 #  geom_histogram(color="white", fill="gray", bins = 10)
 
-
-
 # synthetic data
 res = tibble()
+set.seed(NULL)
 for (rand_data in c('normal','uniform','2groups','3groups'))
 for (dist_method in c('euclidean','manhattan','minkowski'))
 for (data_scale in c(1,100,10000))
-for (row_n in seq(0,10,10))
-for (col_n in seq(0,5,5))
-#for (trial in seq(10))
+for (row_n in c(10,100,1000,10000))
+for (col_n in c(2,10,50))
+for (trial in seq(10))
 {
   if (row_n == 0 | col_n == 0) next()
   rand_tib = gen_random_matrix(rand_data, row_n, col_n, data_scale)
   utib = dist_uniq(rand_tib, dist_method)
   res_row = desc_stats(utib$sum_dists_z)
   res_row = res_row %>% add_column(distrib = rand_data, 
-                                   dist_method = dist_method,
-                                   data_scale = data_scale,
-                                   row_n = row_n, 
-                                   col_n = col_n, 
-                                   .before = "n")
+                           dist_method = dist_method,
+                           data_scale = data_scale,
+                           row_n = row_n, 
+                           col_n = col_n, 
+                           sample_n = nrow(utib),
+                           trial = trial,
+                           .before = "n")
   res = bind_rows(res, res_row)
 }
 
-#View
-print(res)
+View(res)
+openxlsx::write.xlsx(res, 'analysis/high_dimensional_experiment.xlsx')
+TODO
 
 summary_res = tibble()
-for (vars in list('distrib')){
+for (vars in list(c('distrib','dist_method'))){
      #c('distrib','dist_method'), c('distrib','dist_method','data_scale'))){
   print(vars)
-  summary_stats_row = res %>% group_by_(vars) %>% summarize(
-    mn_max = mean(max), 
-    mn_skew=mean(skewness),
-    mn_shap_w=mean(shapiro_w)) %>% 
-    mutate(across(where(is.numeric), round, 3)) %>% 
-    add_column(vars=paste0(vars,collapse = ' '))
+  summary_stats_row = res %>% group_by_('distrib','dist_method','data_scale') %>% summarize(
+    mn_med = mean(med),
+    mn_max = mean(max),
+    mn_skew = mean(skewness),
+    mn_shap_w = mean(shapiro_w)) %>% 
+    mutate(across(where(is.numeric), round, 3)) #%>% 
+    #add_column(vars=paste0(vars,collapse = ' '), .before = 'distrib')
   #TODO: NOT WORKING
+  View(summary_stats_row)
   summary_res = bind_rows(summary_res, summary_stats_row)
 }
-#View(summary_res)
+View(summary_res)
 #TODO
 #ggplot(uniq$uniqueness, aes(x=uniq)) + xlim(0,1) + xlab("Uniqueness index") + 
 #  geom_histogram(color="white", fill="lightblue", bins = 20)
@@ -331,6 +413,28 @@ for (vars in list('distrib')){
 #ggplot(uniq$uniqueness, aes(x=entropy)) + xlab("Entropy") + 
 #  geom_histogram(color="white", fill="lightgreen", bins = 10)
 
+```
+
+## Mahalanobis distance
+
+"In multivariate space, the Mahalanobis distance is the distance between two points. It’s frequently used to locate outliers in statistical investigations involving several variables."
+https://www.r-bloggers.com/2021/08/how-to-calculate-mahalanobis-distance-in-r/
+
+```{r}
+intib = gen_random_matrix('2groups', 10, 4)
+intib
+
+# x: input data
+# center: indicate the mean vector of the distribution
+# cov: indicate the covariance matrix of the distribution
+intib$maha_dist = mahalanobis(intib, colMeans(intib), cov(intib))
+
+# The p-value is the Chi-Square statistic of the
+# Mahalanobis distance with k-1 degrees of freedom, 
+# where k is the number of variables.
+intib$maha_pvalue <- pchisq(intib$maha_dist, df=ncol(intib), lower.tail=F)
+View(intib)
+maha_dist
 ```
 
 # Case studies
