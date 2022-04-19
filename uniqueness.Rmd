@@ -2,9 +2,11 @@
 title: "Calculating uniqueness"
 author: "Andrea Ballatore"
 date: "27/03/2022"
-output: html_document
+output: 
+  html_document: 
+    toc: yes
+    number_sections: yes
 ---
-# Setup 
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -17,16 +19,128 @@ library(entropy)
 library(pastecs)
 library(coop)
 library(sf)
+
+#' @return x rescaled between 0 and 1
+range01 <- function(x){
+  den = (max(x,na.rm = T)-min(x,na.rm = T))
+  stopifnot(den != 0)
+  (x-min(x,na.rm = T))/den
+}
+
+#' rename scale as z score for clarity
+zscore <- function(x){scale(x)}
+
+#' @return a tibble with the given value in each cell
+gen_const_matrix = function(n_row, n_col, val){
+  tib = as_tibble(matrix(nrow=n_row,ncol=n_col))
+  tib[,] = val
+  return(tib)
+}
+
+#' Generate random data for testing.
+#' @return a tibble with random values following a given distribution
+gen_random_matrix = function(distrib, n_row, n_col, scale=1, group_split=.2){
+  print(paste('gen_random_matrix',distrib, n_row, n_col, scale))
+  stopifnot(distrib %in% c('normal','uniform','2groups','3groups'))
+  stopifnot(n_row > 0 && n_col > 0)
+  stopifnot(group_split > 0 && group_split < 1)
+  if (distrib=='normal'){
+    rand = as_tibble(matrix(rnorm(n_row*n_col), nrow=n_row))
+    return(rand*scale)
+  }
+  if (distrib=='uniform'){
+    return(as_tibble(matrix(runif(n_row*n_col), nrow=n_row))*scale)
+  }
+  if (distrib=='2groups'){
+    # create data with some common and rare groups
+    common_tib = gen_random_matrix('normal', n_row * (1-group_split), n_col, scale)
+    rare_tib =   gen_random_matrix('normal', n_row * group_split, n_col, scale*1000)
+    tib = bind_rows(common_tib, rare_tib)
+    return(tib %>% sample_frac(1))
+  }
+  if (distrib=='3groups'){
+    # create data with some common and rare groups
+    common_tib = gen_random_matrix('normal', n_row * .7, n_col, scale)
+    med_tib =   gen_random_matrix('normal', n_row * .2, n_col, scale*100)
+    rare_tib =   gen_random_matrix('normal', n_row * .1, n_col, scale*1000)
+    tib = bind_rows(common_tib, med_tib, rare_tib)
+    return(tib %>% sample_frac(1))
+  }
+}
+
+#' Descriptive statistics
+#' @return tibble with a row with descriptive stats about x.
+desc_stats <- function(x){
+ tibble(
+  n = length(x),
+  min = min(x),
+  med = median(x),
+  mean = mean(x),
+  max = max(x),
+  skewness = round(skewness(x),3),
+  iqr = round(IQR(x),3),
+  shapiro_w = shapiro.test(x)$stat,
+  shapiro_p = round(shapiro.test(x)$p,5)
+ )
+}
 ```
 
-# Uniqueness functions
+# Uniqueness
+
+## Single variable
+
+Uniqueness can be thought of as $1 - p$, where p is the probability of encountering a particular observation from random extractions from a set.
+
+For example, these are the percentages of land cover categories in the UK: Farmland 56.7%, Natural 34.9%, Green urban 2.5%, Built on 5.9%. Taking a probabilistic view, we can define the uniqueness of a category as 1-p. The rarest category we would encounter by selecting a random area in the UK is green urban ($U = .98$).
+
+Data source: https://www.eea.europa.eu/publications/COR0-landcover
+
+```{r}
+uk_landcover = tibble(cat=c('farm','natural','green urban','built'), pc=c(56.7, 34.9, 2.5, 5.9))
+uk_landcover$p = uk_landcover$pc/100
+uk_landcover$uniq = 1 - uk_landcover$p
+
+uk_landcover
+```
+
+## Multi-variate
+
+The multivariate case is more interesting and challenging. It is useful for exploratory data analysis (EDA).
+
+```{r}
+multiv_tib = as_tibble(matrix(c(-1,0,1,-1,0,1), ncol = 2))
+print(multiv_tib)
+
+# get distance matrix
+dist_mat = as.matrix(dist(multiv_tib, diag = T, upper = T))
+print(dist_mat)
+# sum distances
+rowSums(dist_mat)
+
+ggplot(multiv_tib, aes(x=V1, y=V2)) + theme(aspect.ratio = 1) +
+  geom_point(size=3, colour='blue', fill='blue')
+```
 
 ```{r uniq}
+
+#' Calculate uniqueness based on distance in multi-dimensional space.
+#' @param tib
+#' @param dist_method
+#' @return 
+dist_uniq = function(tib, dist_method){
+  # scale input variables mean + sd
+  tib = tib %>% mutate_if(is.numeric, scale)
+  sum_dists = rowSums(as_tibble(as.matrix(dist(tib, diag = T, upper = T, method = dist_method))))
+  utib = tib
+  utib$sum_dists = sum_dists
+  utib$sum_dists_z = zscore(sum_dists)
+  utib
+}
 
 #' Main function to calculate uniqueness 
 #' @tib input data tibble, including numeric and non-numeric columns
 #' @return a tibble with results and the similarity matrix between all rows.
-calc_uniqueness = function(tib, sim_method, handle_missing_values=T){
+OLD_calc_uniqueness = function(tib, sim_method, handle_missing_values=T){
   # get only numeric columns
   indata = tib %>% select_if(is.numeric)
   stopifnot(ncol(indata) > 1)
@@ -77,7 +191,7 @@ calc_uniqueness = function(tib, sim_method, handle_missing_values=T){
   uniq_df$sim_sum[uniq_df$sim_sum == 0] <- NA
   uniq_df$uniq = 1 - (uniq_df$sim_sum / nrow(uniq_df))
   uniq_df$uniq_rank = rank(-uniq_df$uniq)
-  uniq_df$uniq_z = (uniq_df$uniq - mean(uniq_df$uniq))/sd(uniq_df$uniq)
+  uniq_df$uniq_z = z_score(uniq_df$uniq)
   uniq_df$uniq_dist_avg = uniq_df$uniq - mean(uniq_df$uniq)
   # save entropy in results
   #uniq_df$entropy = entropies
@@ -87,36 +201,70 @@ calc_uniqueness = function(tib, sim_method, handle_missing_values=T){
   return(list(uniqueness=uniq_df, sim_matrix=sim_matrix))
 }
 
-range01 <- function(x){
-  (x-min(x,na.rm = T))/(max(x,na.rm = T)-min(x,na.rm = T))
-}
+```
 
-#' @return a tibble with random values following a given distribution
-gen_random_matrix = function(distrib, n_row, n_col, scale=1, group_split=.2){
-  print(paste('gen_random_matrix',distrib, n_row, n_col, scale))
-  stopifnot(distrib %in% c('normal','uniform','groups'))
-  stopifnot(n_row > 0 && n_col > 0)
-  stopifnot(group_split > 0 && group_split < 1)
-  if (distrib=='normal'){
-    rand = as_tibble(matrix(rnorm(n_row*n_col), nrow=n_row))
-    return(rand*scale)
-  }
-  if (distrib=='uniform'){
-    return(as_tibble(matrix(runif(n_row*n_col), nrow=n_row))*scale)
-  }
-  if (distrib=='groups'){
-    # create data with some common and rare groups
-    common_tib = gen_random_matrix('normal', n_row * (1-group_split), n_col, scale)
-    rare_tib =   gen_random_matrix('normal', n_row * group_split, n_col, scale*1000)
-    tib = bind_rows(common_tib, rare_tib)
-    return(tib %>% sample_frac(1))
-  }
+# Sandbox
+
+```{r include=T}
+# generate matrices
+set.seed(50)
+unitib = gen_random_matrix('uniform', 1000, 10)
+normtib = gen_random_matrix('normal', 8, 3)
+gtib = gen_random_matrix('2groups', 100, 3, group_split = .2)
+zerotib = gen_const_matrix(8,3,0)
+onetib = gen_const_matrix(8,3,1)
+
+# test uniqueness
+tib = unitib
+
+if (F){
+  # scale variables 0 1
+  #tib = tib %>% mutate_if(is.numeric, range01)
+  
 }
+#cos = tcosine(tib)
+
+#utib$sum_dists_div = sum_dists / nrow(utib)
+#utib$sum_dists_log = log10(utib$sum_dists+1)
+#utib$sum_dists_sqrt = sqrt(utib$sum_dists)
+#n = 3
+#utib$sum_dists_nrt = utib$sum_dists ^ (1 / n)
+#utib$uniq_lin = 1/(1+utib$sum_dists)
+#utib$uniq_log = 1/(1+utib$sum_dists_log)
+#utib$uniq_sqrt = 1/(1+utib$sum_dists_sqrt)
+#utib$sum_cos = rowSums(cos)
+#utib$sum_cos_pos = utib$sum_cos-min(utib$sum_cos)
+#utib$sum_cos_log = log10(utib$sum_cos+1)
+
+#View(round(utib,4))
+#summary(utib)
+
+# plot histograms
+#tib_long <- utib %>% pivot_longer(colnames(utib)) %>% as_tibble()
+#gp1 <- ggplot(tib_long, aes(x = value)) +    # Draw each column as histogram
+  #geom_histogram(bins = 10) + 
+#  geom_density(adjust = 1/2) + 
+#  facet_wrap(~ name, scales = "free_x")
+#print(gp1)
+
+# characteristics of uniq to be saved for diagnostic
+#x = scale(utib$sum_dists)
+
+#desc_stats(x)
+```
+
+
+```{r}
+
 ```
 
 # Synthetic data
 
+- Simple uniqueness Uniq as z score of sum of distances
+- Shapiro-Wilk Test on Uniq: low W on heterogenous distribution; high W on homog.
+
 ```{r}
+
 
 #tibs = list(gen_random_matrix('normal', 10, 5),
 #  gen_random_matrix('uniform', 10, 5),
@@ -135,38 +283,53 @@ gen_random_matrix = function(distrib, n_row, n_col, scale=1, group_split=.2){
 #ggplot(u$uniqueness, aes(x=uniq)) + #xlab("uniq_dist_avg") + 
 #  geom_histogram(color="white", fill="gray", bins = 10)
 
+
+
 # synthetic data
 res = tibble()
-for (method in c('cosine','euclidean','manhattan')) # 'minkowski',
-for (rand_data in c('normal','uniform','groups'))
+for (rand_data in c('normal','uniform','2groups','3groups'))
+for (dist_method in c('euclidean','manhattan','minkowski'))
 for (data_scale in c(1,100,10000))
-for (trial in seq(10))
-for (row_n in seq(0,10,10)){
-  for (col_n in seq(0,5,5)){
-    if (row_n == 0 | col_n == 0) next()
-    rand_tib = gen_random_matrix(rand_data, row_n, col_n, data_scale)
-    uniq = calc_uniqueness(rand_tib, method)
-    #print(paste('corr(uniq,entropy) =', 
-    #      round(cor(uniq$uniqueness$uniq, uniq$uniqueness$entropy),3)))
-    uniq_dist_avg = round(uniq$uniqueness$uniq_dist_avg, 4)
-    res = bind_rows(res, tibble(trial=trial, 
-            rand_data=rand_data, data_scale=data_scale, method=method, 
-            row_n = row_n, col_n = col_n,
-            umin = min(uniq_dist_avg), umed = median(uniq_dist_avg), 
-            umax = max(uniq_dist_avg), uiqr = IQR(uniq_dist_avg),
-            uskew = round(skewness(uniq_dist_avg),2), ukurt = round(kurtosis(uniq_dist_avg),2)))
-  }
+for (row_n in seq(0,10,10))
+for (col_n in seq(0,5,5))
+#for (trial in seq(10))
+{
+  if (row_n == 0 | col_n == 0) next()
+  rand_tib = gen_random_matrix(rand_data, row_n, col_n, data_scale)
+  utib = dist_uniq(rand_tib, dist_method)
+  res_row = desc_stats(utib$sum_dists_z)
+  res_row = res_row %>% add_column(distrib = rand_data, 
+                                   dist_method = dist_method,
+                                   data_scale = data_scale,
+                                   row_n = row_n, 
+                                   col_n = col_n, 
+                                   .before = "n")
+  res = bind_rows(res, res_row)
 }
-View(res)
 
-TODO
-ggplot(uniq$uniqueness, aes(x=uniq)) + xlim(0,1) + xlab("Uniqueness index") + 
-  geom_histogram(color="white", fill="lightblue", bins = 20)
+#View
+print(res)
 
-ggplot(uniq$uniqueness, aes(x=entropy)) + xlab("Entropy") + 
-  geom_histogram(color="white", fill="lightgreen", bins = 10)
+summary_res = tibble()
+for (vars in list('distrib')){
+     #c('distrib','dist_method'), c('distrib','dist_method','data_scale'))){
+  print(vars)
+  summary_stats_row = res %>% group_by_(vars) %>% summarize(
+    mn_max = mean(max), 
+    mn_skew=mean(skewness),
+    mn_shap_w=mean(shapiro_w)) %>% 
+    mutate(across(where(is.numeric), round, 3)) %>% 
+    add_column(vars=paste0(vars,collapse = ' '))
+  #TODO: NOT WORKING
+  summary_res = bind_rows(summary_res, summary_stats_row)
+}
+#View(summary_res)
+#TODO
+#ggplot(uniq$uniqueness, aes(x=uniq)) + xlim(0,1) + xlab("Uniqueness index") + 
+#  geom_histogram(color="white", fill="lightblue", bins = 20)
 
-
+#ggplot(uniq$uniqueness, aes(x=entropy)) + xlab("Entropy") + 
+#  geom_histogram(color="white", fill="lightgreen", bins = 10)
 
 ```
 
@@ -268,7 +431,7 @@ Calculate uniqueness of boroughs based on all variables.
 ### Viz uniqueness 
 
 ```{r}
-lnd_boro_uniq %>% select(uniq) %>% plot(border = 'white', nbreaks = 10, breaks='pretty')
+#lnd_boro_uniq %>% select(uniq) %>% plot(border = 'white', nbreaks = 10, breaks='pretty')
 ```
 
 
