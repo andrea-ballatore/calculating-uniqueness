@@ -91,9 +91,15 @@ desc_stats <- function(x){
 set.seed(50)
 unitib = gen_random_matrix('uniform', 1000, 10)
 normtib = gen_random_matrix('normal', 8, 3)
-gtib = gen_random_matrix('2groups', 100, 3, group_split = .2)
+gtib = gen_random_matrix('2groups', 20, 3, group_split = .2)
 zerotib = gen_const_matrix(8,3,0)
 onetib = gen_const_matrix(8,3,1)
+
+
+gtib = gen_random_matrix('3groups', 100, 5)
+ugtib = dist_uniq(gtib, 'euclidean')
+
+TODO: signficance value of p
 
 # test uniqueness
 tib = unitib
@@ -166,6 +172,33 @@ outliers <- aq.plot(indf, delta=qchisq(0.975, df = ncol(indf)),
                     quan = 1/2, alpha = 0.05)
 ```
 
+
+## Mahalanobis distance
+
+The Mahalnobis distance is often used for OD in multivariate data.
+
+"In multivariate space, the Mahalanobis distance is the distance between two points. 
+It's frequently used to locate outliers in statistical investigations involving 
+several variables."
+Source: https://www.r-bloggers.com/2021/08/how-to-calculate-mahalanobis-distance-in-r/
+
+```{r}
+intib = gen_random_matrix('2groups', 10, 4)
+intib
+
+# x: input data
+# center: indicate the mean vector of the distribution
+# cov: indicate the covariance matrix of the distribution
+intib$maha_dist = mahalanobis(intib, colMeans(intib), cov(intib))
+
+# The p-value is the Chi-Square statistic of the
+# Mahalanobis distance with k-1 degrees of freedom, 
+# where k is the number of variables.
+intib$maha_pvalue <- pchisq(intib$maha_dist, df=ncol(intib), lower.tail=F)
+View(intib)
+maha_dist
+```
+
 # Uniqueness
 
 ## Univariate uniqueness
@@ -214,6 +247,8 @@ The multivariate case is more interesting and challenging. It is useful for expl
 
 In this example, we consider four observations along two dimensions. The geometric interpretation of uniqueness of observation $a$ in this case is $u_a = \sum dist(a,b)$. To make the results more interpretable, we can obtain the $z$ scores. It is possible to observe visually that point 1 is the most spatially isolated, while point 2 is the most central to the dataset and therefore has the lowest uniqueness.
 
+### Minimal example
+
 ```{r}
 multiv_tib = as_tibble(matrix(c(-1,0,1,0,-1,0,1,1), ncol = 2))
 print(multiv_tib)
@@ -242,7 +277,10 @@ ggplot(multiv_tib, aes(x=V1, y=V2, label=sum_dist_z)) + theme(aspect.ratio = 1) 
 
 ```
 
-Define uniqueness calculations
+
+### Distance-based uniq
+
+Define uniqueness functions
 
 ```{r uniq}
 
@@ -271,12 +309,20 @@ dist_uniq = function(tib, dist_method){
     tib = tib %>% sample_n(sample_rows)
   }
   sum_dists = rowSums(as_tibble(as.matrix(dist(tib, diag = T, upper = T, method = dist_method))))
+  
   utib = tib
   utib$sum_dists = sum_dists
   utib$sum_dists_z = zscore(sum_dists)
+  # calculate p value of z score: 
+  # we are interested to check if an observation is higher than expected (lower.tail=F) 
+  utib$sum_dists_z_p = pnorm(q=utib$sum_dists_z, mean = mean(utib$sum_dists_z), 
+                 sd = sd(utib$sum_dists_z), lower.tail=F)
+  # discarded p values
+  #utib$sum_dists_z_p = 2*pnorm(q=utib$sum_dists_z, lower.tail=FALSE)
+  #utib$sum_dists_pvalue <- pchisq(utib$sum_dists_z, df=ncol(tib), lower.tail=F)
+
   utib
 }
-
 
 #' Main function to calculate uniqueness 
 #' @tib input data tibble, including numeric and non-numeric columns
@@ -415,37 +461,16 @@ View(summary_res)
 
 ```
 
-## Mahalanobis distance
-
-"In multivariate space, the Mahalanobis distance is the distance between two points. It’s frequently used to locate outliers in statistical investigations involving several variables."
-https://www.r-bloggers.com/2021/08/how-to-calculate-mahalanobis-distance-in-r/
-
-```{r}
-intib = gen_random_matrix('2groups', 10, 4)
-intib
-
-# x: input data
-# center: indicate the mean vector of the distribution
-# cov: indicate the covariance matrix of the distribution
-intib$maha_dist = mahalanobis(intib, colMeans(intib), cov(intib))
-
-# The p-value is the Chi-Square statistic of the
-# Mahalanobis distance with k-1 degrees of freedom, 
-# where k is the number of variables.
-intib$maha_pvalue <- pchisq(intib$maha_dist, df=ncol(intib), lower.tail=F)
-View(intib)
-maha_dist
-```
 
 # Case studies
 
-## Greater London (land use and Points of Interest)
+## London (land use and POIs)
 
 ```{r}
 
 ```
 
-## Greater London (boroughs)
+## London (boroughs)
 
 ```{r}
 lnd_boro = st_read('data/london/london_borough_profiles_2015/london_boroughs_profiles_2015.geojson')
