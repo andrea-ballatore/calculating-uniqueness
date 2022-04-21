@@ -70,6 +70,7 @@ gen_random_matrix = function(distrib, n_row, n_col, scale=1, group_split=.2){
 
 ```{r include=T}
 
+# TODO: handle missing values in dist_uniq with option
 
 # generate matrices
 set.seed(50)
@@ -490,6 +491,7 @@ Summarise experiment 1 results to observe trends in $u$ in different settings.
 
 ```{r}
 res_tib = readRDS('analysis/high_dimensional_experiment_1.rds')
+print(nrow(res_tib))
 
 summary_res = tibble()
 for (vars in list(c('distrib','dist_method'))){
