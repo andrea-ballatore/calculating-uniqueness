@@ -457,34 +457,36 @@ The Shapiro-Wilk test on $u$ consistently returns low W on heterogeneous distrib
 #ggplot(u$uniqueness, aes(x=uniq)) + #xlab("uniq_dist_avg") + 
 #  geom_histogram(color="white", fill="gray", bins = 10)
 
-# synthetic data
-res = tibble()
-set.seed(NULL)
-for (rand_data in c('normal','uniform','2groups','3groups'))
-for (dist_method in c('euclidean','manhattan','minkowski','mahalanobis'))
-for (data_scale in c(1,100,1000))
-for (row_n in c(10,100,1000,10000))
-for (col_n in c(2,10,20))
-for (trial in seq(10))
-{
-  if (row_n == 0 | col_n == 0) next()
-  #if (dist_method != 'mahalanobis') next()
-  rand_tib = gen_random_matrix(rand_data, row_n, col_n, data_scale)
-  utib = dist_uniq(rand_tib, dist_method)
-  res_row = desc_stats_uniq(utib)
-  res_row = res_row %>% add_column(distrib = rand_data, 
-                           dist_method = dist_method,
-                           data_scale = data_scale,
-                           row_n = row_n, 
-                           col_n = col_n, 
-                           sample_n = nrow(utib),
-                           trial = trial,
-                           .before = "n")
-  res = bind_rows(res, res_row)
+if (T){
+  # synthetic data
+  res = tibble()
+  set.seed(NULL)
+  for (rand_data in c('normal','uniform','2groups','3groups'))
+  for (dist_method in c('euclidean','manhattan','minkowski','mahalanobis'))
+  for (data_scale in c(1,100,1000))
+  for (row_n in c(10,100,1000,10000))
+  for (col_n in c(2,10,20))
+  for (trial in seq(10))
+  {
+    if (row_n == 0 | col_n == 0) next()
+    #if (dist_method != 'mahalanobis') next()
+    rand_tib = gen_random_matrix(rand_data, row_n, col_n, data_scale)
+    utib = dist_uniq(rand_tib, dist_method)
+    res_row = desc_stats_uniq(utib)
+    res_row = res_row %>% add_column(distrib = rand_data, 
+                             dist_method = dist_method,
+                             data_scale = data_scale,
+                             row_n = row_n, 
+                             col_n = col_n, 
+                             sample_n = nrow(utib),
+                             trial = trial,
+                             .before = "n")
+    res = bind_rows(res, res_row)
+  }
+  
+  saveRDS(res, 'analysis/high_dimensional_experiment_1.rds')
+  openxlsx::write.xlsx(res, 'analysis/high_dimensional_experiment_1.xlsx')
 }
-
-saveRDS(res, 'analysis/high_dimensional_experiment_1.rds')
-openxlsx::write.xlsx(res, 'analysis/high_dimensional_experiment_1.xlsx')
 ```
 
 Summarise experiment 1 results to observe trends in $u$ in different settings.
