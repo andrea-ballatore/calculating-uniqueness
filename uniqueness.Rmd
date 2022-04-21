@@ -5,6 +5,7 @@ date: "27/03/2022"
 output: 
   html_document: 
     toc: yes
+    self_contained: true
     number_sections: yes
 ---
 
@@ -62,31 +63,14 @@ gen_random_matrix = function(distrib, n_row, n_col, scale=1, group_split=.2){
   }
 }
 
-#' Descriptive statistics
-#' @return tibble with a row with descriptive stats about x.
-desc_stats <- function(x){
-  shap_x = x
-  if (length(x) > 5000){
-    shap_x = sample(x, 5000)
-  }
-  
-  tibble(
-    n = length(x),
-    min = min(x),
-    med = median(x),
-    mean = mean(x),
-    max = max(x),
-    skewness = round(skewness(x),3),
-    iqr = round(IQR(x),3),
-    shapiro_w = shapiro.test(shap_x)$stat,
-    shapiro_p = round(shapiro.test(shap_x)$p,5)
-  )
-}
+
 ```
 
 # Sandbox
 
 ```{r include=T}
+
+
 # generate matrices
 set.seed(50)
 unitib = gen_random_matrix('uniform', 1000, 10)
@@ -95,11 +79,27 @@ gtib = gen_random_matrix('2groups', 20, 3, group_split = .2)
 zerotib = gen_const_matrix(8,3,0)
 onetib = gen_const_matrix(8,3,1)
 
-
 gtib = gen_random_matrix('3groups', 100, 5)
 ugtib = dist_uniq(gtib, 'euclidean')
+desc_stats_uniq(ugtib)
 
-TODO: signficance value of p
+gtib = gen_random_matrix('2groups', 100, 2)
+ugtib = dist_uniq(gtib, 'euclidean')
+print(desc_stats_uniq(ugtib))
+
+tib = gen_random_matrix('normal', 1000, 5)
+ugtib = dist_uniq(tib, 'euclidean')
+print(desc_stats_uniq(ugtib))
+
+ugtib = dist_uniq(tib, 'euclidean')
+ugtib = dist_uniq(tib, 'mahalanobis')
+ugtib = dist_uniq(tib, 'manhattan')
+desc_stats_uniq(ugtib)
+
+cov(gen_random_matrix('2groups',100,100))
+ugtib = dist_uniq(gen_random_matrix('2groups',100,100), 'mahalanobis')
+tib = gen_random_matrix('2groups',100,100)
+maha_sum_dists = mahalanobis(tib, colMeans(tib), cov(tib), tol=1e-20)
 
 # test uniqueness
 tib = unitib
@@ -284,6 +284,35 @@ Define uniqueness functions
 
 ```{r uniq}
 
+#' Descriptive statistics
+#' @return tibble with a row with descriptive stats about x.
+desc_stats_uniq <- function(utib){
+  x = utib$sum_dists_z
+  shap_x = x
+  if (nrow(utib) > 5000){
+    shap_x = sample(utib, 5000)
+  }
+  
+  uclasses = table(utib$sum_dists_class)/nrow(utib)*100
+  
+  tibble(
+    n = length(x),
+    min = min(x),
+    med = median(x),
+    mean = mean(x),
+    max = max(x),
+    pc_very_common = uclasses['very common'],
+    pc_common = uclasses['common'],
+    pc_inbet = uclasses['in between'],
+    pc_rare = uclasses['rare'],
+    pc_very_rare = uclasses['very rare'],
+    skewness = round(skewness(x),3),
+    iqr = round(IQR(x),3),
+    shapiro_w = shapiro.test(shap_x)$stat,
+    shapiro_p = round(shapiro.test(shap_x)$p,5)
+  )
+}
+
 #' Find a sample size to produce a distance matrix that is manageable in memory
 find_sample_sz = function(n_row, n_col, max_dist_size){
   while(((n_col*n_row)^2) > max_dist_size){
@@ -292,13 +321,26 @@ find_sample_sz = function(n_row, n_col, max_dist_size){
   return(n_row)
 }
 
+#' Classify p values returned by the uniqueness function with a 
+#' human readable label.
+classify_uniq = function(p_values){
+  breaks = c(0, .001, .01, .05, .1, Inf)
+  labels = c('very rare','rare','in between','common','very common')
+  classif = cut(p_values, breaks, labels)
+  #print(summary(classif)/length(p_values)*100)
+  return(classif)
+}
+
 #' Calculate uniqueness based on distance in multi-dimensional space.
 #' @param tib
 #' @param dist_method
 #' @return 
 dist_uniq = function(tib, dist_method){
+  print(paste('dist_uniq', nrow(tib), ncol(tib), dist_method))
   # scale input variables mean + sd
   tib = tib %>% mutate_if(is.numeric, scale)
+  stopifnot(dist_method %in% c('euclidean','mahalanobis','manhattan', 'minkowski'))
+  
   
   # check memory limit for distance matrix
   max_matrix_sz = 1e8
@@ -308,8 +350,14 @@ dist_uniq = function(tib, dist_method){
     warning(paste("Distance matrix would be too large, using a sample N =",sample_rows))
     tib = tib %>% sample_n(sample_rows)
   }
-  sum_dists = rowSums(as_tibble(as.matrix(dist(tib, diag = T, upper = T, method = dist_method))))
-  
+  # calculate distances
+  if (dist_method == 'mahalanobis'){
+    # tolerance has to be set to avoid rounding errors
+    sum_dists = mahalanobis(tib, colMeans(tib), cov(tib), tol=1e-20)
+  } else {
+    sum_dists = rowSums(as_tibble(as.matrix(dist(tib, 
+                    diag = T, upper = T, method = dist_method))))
+  }
   utib = tib
   utib$sum_dists = sum_dists
   utib$sum_dists_z = zscore(sum_dists)
@@ -317,11 +365,12 @@ dist_uniq = function(tib, dist_method){
   # we are interested to check if an observation is higher than expected (lower.tail=F) 
   utib$sum_dists_z_p = pnorm(q=utib$sum_dists_z, mean = mean(utib$sum_dists_z), 
                  sd = sd(utib$sum_dists_z), lower.tail=F)
+  utib$sum_dists_class = classify_uniq(utib$sum_dists_z_p)
   # discarded p values
   #utib$sum_dists_z_p = 2*pnorm(q=utib$sum_dists_z, lower.tail=FALSE)
   #utib$sum_dists_pvalue <- pchisq(utib$sum_dists_z, df=ncol(tib), lower.tail=F)
-
-  utib
+  utib$dist_method = dist_method
+  as_tibble(utib)
 }
 
 #' Main function to calculate uniqueness 
@@ -389,7 +438,7 @@ OLD_calc_uniqueness = function(tib, sim_method, handle_missing_values=T){
 }
 ```
 
-## High dimensionality
+### Experiment with high dim
 
 On high dimensional data, the interpretation of $u$ is less immediate.
 Therefore, it is useful to observe the behaviour of the uniqueness measure $u$ 
@@ -411,16 +460,17 @@ The Shapiro-Wilk test on $u$ consistently returns low W on heterogeneous distrib
 res = tibble()
 set.seed(NULL)
 for (rand_data in c('normal','uniform','2groups','3groups'))
-for (dist_method in c('euclidean','manhattan','minkowski'))
-for (data_scale in c(1,100,10000))
+for (dist_method in c('euclidean','manhattan','minkowski','mahalanobis'))
+for (data_scale in c(1,100,1000))
 for (row_n in c(10,100,1000,10000))
-for (col_n in c(2,10,50))
+for (col_n in c(2,10,20))
 for (trial in seq(10))
 {
   if (row_n == 0 | col_n == 0) next()
+  #if (dist_method != 'mahalanobis') next()
   rand_tib = gen_random_matrix(rand_data, row_n, col_n, data_scale)
   utib = dist_uniq(rand_tib, dist_method)
-  res_row = desc_stats(utib$sum_dists_z)
+  res_row = desc_stats_uniq(utib)
   res_row = res_row %>% add_column(distrib = rand_data, 
                            dist_method = dist_method,
                            data_scale = data_scale,
@@ -432,9 +482,14 @@ for (trial in seq(10))
   res = bind_rows(res, res_row)
 }
 
-View(res)
-openxlsx::write.xlsx(res, 'analysis/high_dimensional_experiment.xlsx')
-TODO
+saveRDS(res, 'analysis/high_dimensional_experiment_1.rds')
+openxlsx::write.xlsx(res, 'analysis/high_dimensional_experiment_1.xlsx')
+```
+
+Summarise experiment 1 results to observe trends in $u$ in different settings.
+
+```{r}
+res_tib = readRDS('analysis/high_dimensional_experiment_1.rds')
 
 summary_res = tibble()
 for (vars in list(c('distrib','dist_method'))){
