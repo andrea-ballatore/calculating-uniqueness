@@ -68,7 +68,7 @@ gen_random_matrix = function(distrib, n_row, n_col, scale=1, group_split=.2){
 
 # Sandbox
 
-```{r include=T}
+```{r include=F}
 
 # TODO: handle missing values in dist_uniq with option
 
@@ -492,34 +492,46 @@ if (T){
 Summarise experiment 1 results to observe trends in $u$ in different settings.
 
 ```{r}
-res_tib = readRDS('analysis/high_dimensional_experiment_1.rds')
+res_tib = readRDS('analysis/high_dimensional_experiment_1.rds') 
+  #%>% #mutate_if(is.character, factor)
 print(nrow(res_tib))
 
 summary_res = tibble()
-for (vars in list(c('distrib','dist_method'))){
-     #c('distrib','dist_method'), c('distrib','dist_method','data_scale'))){
-  print(vars)
-  summary_stats_row = res %>% group_by_('distrib','dist_method','data_scale') %>% summarize(
-    mn_med = mean(med),
-    mn_max = mean(max),
-    mn_skew = mean(skewness),
-    mn_shap_w = mean(shapiro_w)) %>% 
-    mutate(across(where(is.numeric), round, 3)) #%>% 
-    #add_column(vars=paste0(vars,collapse = ' '), .before = 'distrib')
-  #TODO: NOT WORKING
-  View(summary_stats_row)
-  summary_res = bind_rows(summary_res, summary_stats_row)
+
+for (cols in list(c('distrib','row_n'), c('distrib','col_n'), c('distrib'),
+    c('dist_method'), c('data_scale'),
+    c('distrib','dist_method'),
+    c('distrib','dist_method','data_scale'))){
+  print(cols)
+  cols_str = paste(cols, collapse = ' ')
+  res_stats_tib = res_tib %>% 
+    #group_by(distrib, dist_method) %>% 
+    group_by(across(all_of(cols))) %>%  # all_of
+    dplyr::summarise(cols = cols_str, 
+      n = n(), 
+      mn_dist_mean = mean(mean),
+      mn_dist_med = mean(med),
+      mn_dist_max = mean(max),
+      mn_vcommon = mean(pc_very_common),
+      mn_common = mean(pc_common),
+      mn_inbet = mean(pc_inbet),
+      mn_rare = mean(pc_rare),
+      mn_vrare = mean(pc_very_rare),
+      mn_skew = mean(skewness)) %>% 
+    mutate_if(is.numeric, round, 2)
+  
+  summary_res = bind_rows(summary_res, res_stats_tib)
 }
-View(summary_res)
-#TODO
-#ggplot(uniq$uniqueness, aes(x=uniq)) + xlim(0,1) + xlab("Uniqueness index") + 
-#  geom_histogram(color="white", fill="lightblue", bins = 20)
-
-#ggplot(uniq$uniqueness, aes(x=entropy)) + xlab("Entropy") + 
-#  geom_histogram(color="white", fill="lightgreen", bins = 10)
-
+summary_res
 ```
 
+Impact of variables on distribution of uniqueness values:
+
+```{r}
+# impact of distribution
+summary_res %>% filter(cols == 'distrib') %>% dplyr::select(distrib, n, mn_vcommon, mn_common, mn_inbet, mn_rare, mn_vrare)
+
+```
 
 # Case studies
 
