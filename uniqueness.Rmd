@@ -13,13 +13,20 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 
 pacman::p_load(tidyverse, moments, knitr, corrr, entropy, pastecs, coop, sf, 
-               outliers, mvoutlier, mahalanobis)
+               outliers, mvoutlier, flextable, rstatix, FSA) # mahalanobis
 
 #' @return x rescaled between 0 and 1
 range01 <- function(x){
   den = (max(x,na.rm = T)-min(x,na.rm = T))
   stopifnot(den != 0)
   (x-min(x,na.rm = T))/den
+}
+
+#' @return vector of categorical data from percentages and labels
+generate_cat_data_from_pc = function(pcs, labs, size){
+  stopifnot(length(pcs)==length(labs))
+  cats = sample( labs, size, replace=TRUE, prob=pcs/100 )
+  return(cats)
 }
 
 #' rename scale as z score for clarity
@@ -286,7 +293,7 @@ Define uniqueness functions
 ```{r uniq}
 
 #' Descriptive statistics
-#' @return tibble with a row with descriptive stats about x.
+#' @return tibble with a row with descriptive stats about x (z scores).
 desc_stats_uniq <- function(utib){
   x = utib$sum_dists_z
   shap_x = x
@@ -498,7 +505,8 @@ print(nrow(res_tib))
 
 summary_res = tibble()
 
-for (cols in list(c('distrib','row_n'), c('distrib','col_n'), c('distrib'),
+for (cols in list(c('row_n'), c('col_n'), 
+    c('distrib','row_n'), c('distrib','col_n'), c('distrib'),
     c('dist_method'), c('data_scale'),
     c('distrib','dist_method'),
     c('distrib','dist_method','data_scale'))){
@@ -509,8 +517,7 @@ for (cols in list(c('distrib','row_n'), c('distrib','col_n'), c('distrib'),
     group_by(across(all_of(cols))) %>%  # all_of
     dplyr::summarise(cols = cols_str, 
       n = n(), 
-      mn_dist_mean = mean(mean),
-      mn_dist_med = mean(med),
+      mn_dist_min = mean(min),
       mn_dist_max = mean(max),
       mn_vcommon = mean(pc_very_common),
       mn_common = mean(pc_common),
@@ -525,11 +532,67 @@ for (cols in list(c('distrib','row_n'), c('distrib','col_n'), c('distrib'),
 summary_res
 ```
 
-Impact of variables on distribution of uniqueness values:
+Impact of variables on distribution of uniqueness values.
+
+Different distributions generate different common/rare distribution. 1,440 cases observed for each combination. Uniform and normally-distributed data generate a similar pattern, with normal data with more having more rare/very rare observations (2%, 1.1%). Uneven distributions with groups, as expected by their design, generate more rare/very rare observations (4.1% and 7.3%), having a large central group of close observations and relatively many distant observations:
 
 ```{r}
-# impact of distribution
-summary_res %>% filter(cols == 'distrib') %>% dplyr::select(distrib, n, mn_vcommon, mn_common, mn_inbet, mn_rare, mn_vrare)
+# impact of data distribution
+summary_res %>% filter(cols == 'distrib') %>% dplyr::select(distrib, n, mn_dist_min, mn_dist_max, mn_vcommon, mn_common, mn_inbet, mn_rare, mn_vrare) %>% flextable()
+```
+
+The size of the dataset (n observations x n variables) has minimal impact on the behaviour of $u$.
+Varying the number of observations from 10 to 10,000, it is possible to observe that with very few observations (10) it is less likely to obtain very rare observations, as expected. The other three rows converge and do not have significant differences (using Dunn's test):
+
+Rows:
+```{r}
+# compare groups by number of rows
+tib = summary_results_tib %>% filter(cols == 'row_n') %>% 
+  dplyr::select(row_n, n, mn_vcommon, mn_common, mn_inbet, mn_rare, mn_vrare)
+all_vals = tibble()
+u_labels = c('vcommon','common','inbet','rare','vrare')
+for(i in tib$row_n){
+  pcs = tib %>% filter(row_n == i) %>% 
+    dplyr::select(mn_vcommon, mn_common, mn_inbet, mn_rare, mn_vrare) %>% t() %>% as.vector()
+  sz = tib %>% filter(row_n == i) %>% dplyr::select(n) %>% .[[1]]
+  vals = generate_cat_data_from_pc(pcs, u_labels, sz)
+  row_tib = tibble(group = i, val = vals)
+  all_vals = bind_rows(all_vals, row_tib)
+}
+
+# Dunn's test to check if the groups are different (non-parametric)
+res_dunn = all_vals %>% rstatix::dunn_test(val ~ group)
+res_dunn
+```
+Columns do not have impact on the results:
+
+```{r}
+# compare groups by number of rows
+tib = summary_results_tib %>% filter(cols == 'col_n') %>% 
+  dplyr::select(col_n, n, mn_vcommon, mn_common, mn_inbet, mn_rare, mn_vrare)
+all_vals = tibble()
+u_labels = c('vcommon','common','inbet','rare','vrare')
+for(i in tib$col_n){
+  print(i)
+  pcs = tib %>% filter(col_n == i) %>% 
+    dplyr::select(mn_vcommon, mn_common, mn_inbet, mn_rare, mn_vrare) %>% t() %>% as.vector()
+  sz = tib %>% filter(col_n == i) %>% dplyr::select(n) %>% .[[1]]
+  print(paste('generating synth data:',sz))
+  vals = generate_cat_data_from_pc(pcs, u_labels, sz)
+  row_tib = tibble(group = i, val = vals)
+  all_vals = bind_rows(all_vals, row_tib)
+}
+
+# Dunn's test to check if the groups are different (non-parametric)
+res_dunn = all_vals %>% rstatix::dunn_test(val ~ group)
+res_dunn
+```
+
+TODO: imapct of other parameters, distance etc
+
+
+```{r}
+
 
 ```
 
