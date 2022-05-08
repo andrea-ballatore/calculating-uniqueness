@@ -25,8 +25,14 @@ range01 <- function(x){
 #' @return vector of categorical data from percentages and labels
 generate_cat_data_from_pc = function(pcs, labs, size){
   stopifnot(length(pcs)==length(labs))
-  cats = sample( labs, size, replace=TRUE, prob=pcs/100 )
-  return(cats)
+  x = c()
+  for (i in 1:length(pcs)){
+    pc = pcs[i]
+    lab = labs[i]
+    n = size * pc/100
+    x = c(x, rep(lab,n))
+  }
+  sample(x)
 }
 
 #' rename scale as z score for clarity
