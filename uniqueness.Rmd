@@ -461,6 +461,8 @@ through a Monte Carlo method.
 A core idea is that data with uniformly and normally distributed variables can still produce high values of $u$, generating false positives in the search for unique observations.
 The Shapiro-Wilk test on $u$ consistently returns low W on heterogeneous distributions with actual groups and high W on homogeneous data, regardless of scale.
 
+#### Generate synth data
+
 ```{r}
 #t = gen_random_matrix('normal', 10, 5)
 #u = calc_uniqueness(t, 'euclidean')
@@ -502,6 +504,8 @@ if (T){
 }
 ```
 
+#### Analyse results
+
 Summarise experiment 1 results to observe trends in $u$ in different settings.
 
 ```{r}
@@ -542,9 +546,31 @@ Impact of variables on distribution of uniqueness values.
 
 Different distributions generate different common/rare distribution. 1,440 cases observed for each combination. Uniform and normally-distributed data generate a similar pattern, with normal data with more having more rare/very rare observations (2%, 1.1%). Uneven distributions with groups, as expected by their design, generate more rare/very rare observations (4.1% and 7.3%), having a large central group of close observations and relatively many distant observations:
 
+Using the Dunn's test, the only two distributions that are not significantly different are the normal and the uniform, which generate similar uniqueness patterns (TODO: why?).
+
 ```{r}
 # impact of data distribution
-summary_res %>% filter(cols == 'distrib') %>% dplyr::select(distrib, n, mn_dist_min, mn_dist_max, mn_vcommon, mn_common, mn_inbet, mn_rare, mn_vrare) %>% flextable()
+#summary_res %>% filter(cols == 'distrib') %>% dplyr::select(distrib, n, mn_dist_min, mn_dist_max, mn_vcommon, mn_common, mn_inbet, mn_rare, mn_vrare) %>% flextable()
+
+# compare groups by number of rows
+tib = summary_results_tib %>% filter(cols == 'distrib') %>% 
+  dplyr::select(distrib, n, mn_vcommon, mn_common, mn_inbet, mn_rare, mn_vrare) %>% unique()
+tib %>% flextable()
+
+all_vals = tibble()
+u_labels = c('vcommon','common','inbet','rare','vrare')
+for(i in tib$distrib){
+  pcs = tib %>% filter(distrib == i) %>% 
+    dplyr::select(mn_vcommon, mn_common, mn_inbet, mn_rare, mn_vrare) %>% t() %>% as.vector()
+  sz = tib %>% filter(distrib == i) %>% dplyr::select(n) %>% .[[1]]
+  vals = generate_cat_data_from_pc(pcs, u_labels, sz)
+  row_tib = tibble(group = i, val = vals)
+  all_vals = bind_rows(all_vals, row_tib)
+}
+
+# Dunn's test to check if the groups are different (non-parametric)
+res_dunn = all_vals %>% rstatix::dunn_test(val ~ group)
+res_dunn
 ```
 
 The size of the dataset (n observations x n variables) has minimal impact on the behaviour of $u$.
@@ -593,13 +619,47 @@ for(i in tib$col_n){
 res_dunn = all_vals %>% rstatix::dunn_test(val ~ group)
 res_dunn
 ```
-
-TODO: imapct of other parameters, distance etc
-
+The four distance methods do not generate significantly different proportions of $u$ results.
 
 ```{r}
+# compare distance metrics
+tib = summary_results_tib %>% filter(cols == 'dist_method') %>% 
+  dplyr::select(dist_method, n, mn_vcommon, mn_common, mn_inbet, mn_rare, mn_vrare) %>% unique()
+all_vals = tibble()
+u_labels = c('vcommon','common','inbet','rare','vrare')
+for(i in tib$dist_method){
+  pcs = tib %>% filter(dist_method == i) %>% 
+    dplyr::select(mn_vcommon, mn_common, mn_inbet, mn_rare, mn_vrare) %>% t() %>% as.vector()
+  sz = tib %>% filter(dist_method == i) %>% dplyr::select(n) %>% .[[1]]
+  vals = generate_cat_data_from_pc(pcs, u_labels, sz)
+  row_tib = tibble(group = i, val = vals)
+  all_vals = bind_rows(all_vals, row_tib)
+}
 
+# Dunn's test to check if the groups are different (non-parametric)
+res_dunn = all_vals %>% rstatix::dunn_test(val ~ group)
+res_dunn
+```
+Data scale don't make any difference to the results either.
 
+```{r}
+# compare data scale
+tib = summary_results_tib %>% filter(cols == 'data_scale') %>% 
+  dplyr::select(data_scale, n, mn_vcommon, mn_common, mn_inbet, mn_rare, mn_vrare) %>% unique()
+all_vals = tibble()
+u_labels = c('vcommon','common','inbet','rare','vrare')
+for(i in tib$data_scale){
+  pcs = tib %>% filter(data_scale == i) %>% 
+    dplyr::select(mn_vcommon, mn_common, mn_inbet, mn_rare, mn_vrare) %>% t() %>% as.vector()
+  sz = tib %>% filter(data_scale == i) %>% dplyr::select(n) %>% .[[1]]
+  vals = generate_cat_data_from_pc(pcs, u_labels, sz)
+  row_tib = tibble(group = i, val = vals)
+  all_vals = bind_rows(all_vals, row_tib)
+}
+
+# Dunn's test to check if the groups are different (non-parametric)
+res_dunn = all_vals %>% rstatix::dunn_test(val ~ group)
+res_dunn
 ```
 
 # Case studies
