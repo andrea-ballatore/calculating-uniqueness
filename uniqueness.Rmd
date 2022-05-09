@@ -81,7 +81,7 @@ gen_random_matrix = function(distrib, n_row, n_col, scale=1, group_split=.2){
 
 # Sandbox
 
-```{r include=F}
+```{r eval=FALSE}
 
 # TODO: handle missing values in dist_uniq with option
 
@@ -178,12 +178,11 @@ In a multi-variate context, the outliers we are interested in are *rare combinat
 https://rpubs.com/Treegonaut/301942
 
 
-```{r}
+```{r eval=FALSE}
 # use mvoutlier
-indf = as.data.frame(gen_random_matrix('2groups', 20, 5))
+indf = as.data.frame(gen_random_matrix('2groups', 20, 3))
 
-outliers <- aq.plot(indf, delta=qchisq(0.975, df = ncol(indf)),
-                    quan = 1/2, alpha = 0.05)
+outliers <- aq.plot(indf, delta=qchisq(0.975, df = ncol(indf)))
 ```
 
 
@@ -209,8 +208,8 @@ intib$maha_dist = mahalanobis(intib, colMeans(intib), cov(intib))
 # Mahalanobis distance with k-1 degrees of freedom, 
 # where k is the number of variables.
 intib$maha_pvalue <- pchisq(intib$maha_dist, df=ncol(intib), lower.tail=F)
-View(intib)
-maha_dist
+#View(intib)
+intib$maha_dist
 ```
 
 # Uniqueness
@@ -463,7 +462,7 @@ The Shapiro-Wilk test on $u$ consistently returns low W on heterogeneous distrib
 
 #### Generate synth data
 
-```{r}
+```{r eval=FALSE}
 #t = gen_random_matrix('normal', 10, 5)
 #u = calc_uniqueness(t, 'euclidean')
 #View(u$uniqueness)
@@ -551,6 +550,7 @@ Using the Dunn's test, the only two distributions that are not significantly dif
 ```{r}
 # impact of data distribution
 #summary_res %>% filter(cols == 'distrib') %>% dplyr::select(distrib, n, mn_dist_min, mn_dist_max, mn_vcommon, mn_common, mn_inbet, mn_rare, mn_vrare) %>% flextable()
+summary_results_tib = summary_res
 
 # compare groups by number of rows
 tib = summary_results_tib %>% filter(cols == 'distrib') %>% 
