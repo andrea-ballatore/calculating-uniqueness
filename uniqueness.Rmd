@@ -13,7 +13,7 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 
 pacman::p_load(tidyverse, moments, knitr, corrr, entropy, pastecs, coop, sf, 
-               outliers, mvoutlier, flextable, rstatix, FSA) # mahalanobis
+               outliers, mvoutlier, flextable, rstatix, FSA, tmap) # mahalanobis
 
 #' @return x rescaled between 0 and 1
 range01 <- function(x){
@@ -76,7 +76,11 @@ gen_random_matrix = function(distrib, n_row, n_col, scale=1, group_split=.2){
   }
 }
 
-
+#' Impute NAs in all numeric columns in tib
+impute_numeric_cols_median = function(tib){
+  tib %>% mutate_if(is.numeric, 
+                function(x) ifelse(is.na(x), median(x, na.rm = TRUE), x))
+}
 ```
 
 # Sandbox
@@ -316,7 +320,7 @@ desc_stats_uniq <- function(utib){
     max = max(x),
     pc_very_common = uclasses['very common'],
     pc_common = uclasses['common'],
-    pc_inbet = uclasses['in between'],
+    pc_inbet = uclasses['medium'],
     pc_rare = uclasses['rare'],
     pc_very_rare = uclasses['very rare'],
     skewness = round(skewness(x),3),
@@ -338,22 +342,31 @@ find_sample_sz = function(n_row, n_col, max_dist_size){
 #' human readable label.
 classify_uniq = function(p_values){
   breaks = c(0, .001, .01, .05, .1, Inf)
-  labels = c('very rare','rare','in between','common','very common')
+  labels = c('very rare','rare','medium','common','very common')
   classif = cut(p_values, breaks, labels)
   #print(summary(classif)/length(p_values)*100)
   return(classif)
 }
 
 #' Calculate uniqueness based on distance in multi-dimensional space.
+#' Every numeric column is scaled.
+#' 
 #' @param tib
-#' @param dist_method
-#' @return 
-dist_uniq = function(tib, dist_method){
+#' @param dist_method: 'euclidean','mahalanobis','manhattan', 'minkowski'
+#' @return tib with uniqueness
+dist_uniq = function(tib, dist_method, scale_cols=T, impute_na=F){
   print(paste('dist_uniq', nrow(tib), ncol(tib), dist_method))
-  # scale input variables mean + sd
-  tib = tib %>% mutate_if(is.numeric, scale)
+  if (impute_na){
+    print('imputing missing values...')
+    # impute missing values
+    tib = impute_numeric_cols_median(tib)
+  }
+  if (scale_cols){
+    print('scaling data...')
+    # scale input variables mean + sd
+    tib = tib %>% mutate_if(is.numeric, scale)
+  }
   stopifnot(dist_method %in% c('euclidean','mahalanobis','manhattan', 'minkowski'))
-  
   
   # check memory limit for distance matrix
   max_matrix_sz = 1e8
@@ -366,9 +379,13 @@ dist_uniq = function(tib, dist_method){
   # calculate distances
   if (dist_method == 'mahalanobis'){
     # tolerance has to be set to avoid rounding errors
-    sum_dists = mahalanobis(tib, colMeans(tib), cov(tib), tol=1e-20)
+    num_tib = tib %>% select_if(is.numeric)
+    sum_dists = mahalanobis(num_tib, colMeans(num_tib, na.rm = T), 
+                            cov(num_tib, use="complete.obs"), tol=1e-20)
   } else {
-    sum_dists = rowSums(as_tibble(as.matrix(dist(tib, 
+    num_tib = tib %>% select_if(is.numeric)
+    # all other distances
+    sum_dists = rowSums(as_tibble(as.matrix(dist(num_tib, 
                     diag = T, upper = T, method = dist_method))))
   }
   utib = tib
@@ -389,7 +406,7 @@ dist_uniq = function(tib, dist_method){
 #' Main function to calculate uniqueness 
 #' @tib input data tibble, including numeric and non-numeric columns
 #' @return a tibble with results and the similarity matrix between all rows.
-OLD_calc_uniqueness = function(tib, sim_method, handle_missing_values=T){
+OLD_calc_uniqueness_ = function(tib, sim_method, handle_missing_values=T){
   # get only numeric columns
   indata = tib %>% select_if(is.numeric)
   stopifnot(ncol(indata) > 1)
@@ -670,7 +687,9 @@ res_dunn
 
 ```
 
-## London (boroughs)
+## London boroughs
+TODO: 
+Boroughs of Greater London with socio-economic variables.
 
 ```{r}
 lnd_boro = st_read('data/london/london_borough_profiles_2015/london_boroughs_profiles_2015.geojson')
@@ -683,8 +702,6 @@ plot(lnd_boro %>% select(-id,-name), border='white')
 # from https://data.gov.uk/dataset/248f5f04-23cf-4470-9216-0d0be9b877a8/london-borough-profiles-and-atlas/datafile/1e5d5226-a1a7-4097-afbf-d3bd39226c39/preview
 #lnd_boro[lnd_boro$name == "Kensington and Chelsea", "gross_annual_pay_2016"] = 63620
 ```
-### Prep data
-
 Find problematic variables.
 
 ```{r}
@@ -707,6 +724,7 @@ ggplot(gather(lnd_boro %>% st_drop_geometry() %>% select(-name,-id)), aes(value)
     geom_histogram(bins = 20) + 
     facet_wrap(~key, scales = 'free_x')
 ```
+
 The only variable whose skewness is a concern is `median_house_price_2015`. It will be normalised with log10.
 
 ```{r}
@@ -745,30 +763,126 @@ rm(mds)
 ```
 
 
-### Calc uniqueness
+
+
+### Calc uniqueness 
 
 Calculate uniqueness of boroughs based on all variables.
 
 ```{r}
-#indata = lnd_boro_scaled %>% st_drop_geometry() %>% select(-name,-id)
+# 'euclidean','manhattan', 'minkowski', mahalanobis'
 
+# filter out very rare
+lnd_boro = lnd_boro %>% filter(!(id %in% c('E09000001','E09000020')))
 
-#openxlsx::write.xlsx(lnd_boro_uniq %>% st_drop_geometry() %>% mutate_if(is.numeric, round, 4), 'analysis/london_boroughs_scaled_uniqueness.xlsx')
+lnd_boro_u = dist_uniq(lnd_boro %>% st_drop_geometry(), 'euclidean')
+lnd_boro_u_man = dist_uniq(lnd_boro %>% st_drop_geometry(), 'manhattan')
+lnd_boro_u_mink = dist_uniq(lnd_boro %>% st_drop_geometry(), 'minkowski')
+lnd_boro_u_maha = dist_uniq(lnd_boro %>% st_drop_geometry(), 'mahalanobis', impute_na = T)
 
+openxlsx::write.xlsx(lnd_boro_u %>% mutate_if(is.numeric, round, 4), 'analysis/london_boroughs_uniqueness.xlsx')
 ```
 
-### Viz uniqueness 
+### Visualise uniqueness
+
+Based on https://mharinga.github.io/choropleth.html (accessed in May 2022).
 
 ```{r}
-#lnd_boro_uniq %>% select(uniq) %>% plot(border = 'white', nbreaks = 10, breaks='pretty')
+# bar chart
+lnd_boro_u %>% select(sum_dists_class) %>% plot()
+# add geometries
+lnd_boro_u_geo = merge(lnd_boro %>% select(id, geometry), lnd_boro_u)
+# choropleth
+u_colors = rev(toupper(c('#f0f9e8','#bae4bc','#7bccc4','#43a2ca','#0868ac')))
+lnd_boro_u_geo %>% select(sum_dists_class) %>% plot(border = 'lightgray', 
+        pal = u_colors,
+        main='Uniqueness of London boroughs')
 ```
 
+```{r}
+
+TODO: fix code
+
+#tmap_mode("view")
+tmap_mode("plot")
+
+tm_shape(lnd_boro_u_geo) +
+  tm_polygons('sum_dists_class', #"sum_dists_class",sum_dists_z_p
+        id = "name",
+        palette = "viridis",
+        #style = "fisher", 
+        title = "Uniqueness of London boroughs", 
+        legend.hist = T,
+        alpha = .5)
+```
 
 
 ## Countries (World Bank data)
 
+Calculate uniqueness of countries based on World Bank indicators (2019).
+
+
+### Prep data
+
+Select countries with at least 1 million people:
+
+```{r}
+wb_geo = read_sf("data/world_bank/indicators_by_year/world_bank_indicators_countries-2019.geojson") %>% filter(!is.na(iso3c) & sp.pop.totl >= 1e6)
+names(wb_geo)
+nrow(wb_geo)
+```
+
 ```{r}
 
+wb_tib = wb_geo %>% st_drop_geometry() %>% rename(
+  population = sp.pop.totl,
+  pop_growth = sp.pop.grow,
+  urban_pop = sp.urb.totl.in.zs,
+  gdp = ny.gdp.mktp.pp.cd,
+  gdp_trade = ne.trd.gnfs.zs,
+  internet_access = it.net.user.zs,
+  military_exp = ms.mil.xpnd.gd.zs
+) %>% select(iso_a2, iso_a3, name, region_un, population, pop_growth, gdp,
+             urban_pop, income_group, internet_access, military_exp)
+
+wb_tib %>% sample_n(10)
+```
+
+Transform problematic variables:
+
+```{r}
+# get correlations
+wb_corr = wb_tib %>% select_if(is.numeric) %>% correlate(method='kendall', use="na.or.complete") %>% stretch()
+# observe high correlations
+wb_corr %>% filter(r > .5 | r < -.5)
+```
+
+```{r}
+# histograms to see normality
+ggplot(gather(wb_tib %>% select_if(is.numeric)), aes(value)) + 
+    geom_histogram(bins = 20) + 
+    facet_wrap(~key, scales = 'free_x')
+```
+
+The only variables whose skewness are a serious concern are `population` and `gdp`. 
+They will be normalised with log10.
+
+```{r}
+# normalise and scale
+wb_trans_tib = wb_tib %>% mutate(gdp = log10(gdp+1), population = log10(population+1))
+
+ggplot(gather(wb_trans_tib %>% select_if(is.numeric)), aes(value)) + 
+    geom_histogram(bins = 20) + 
+    facet_wrap(~key, scales = 'free_x')
+```
+### Calc uniqueness
+
+```{r}
+
+wb_uniq = dist_uniq(wb_trans_tib, 'euclidean')
+#View(wb_uniq)
+
+#TODO: visualise
 ```
 
 ## EU (Eurostat data)
