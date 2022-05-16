@@ -81,13 +81,28 @@ impute_numeric_cols_median = function(tib){
   tib %>% mutate_if(is.numeric, 
                 function(x) ifelse(is.na(x), median(x, na.rm = TRUE), x))
 }
+
+#' @return TRUE if vector x is unique
+is_unique <- function(x){ return(!any(duplicated(x))) }
 ```
 
 # Sandbox
 
 ```{r eval=FALSE}
 
-# TODO: handle missing values in dist_uniq with option
+a <- c(2, 4, 4, 6)
+b <- c(5, 5, 7, 8)
+c <- c(9, 9, 9, 8)
+d <- c(1, 2, 3, 3)
+#row bind four vectors into matrix
+mat <- rbind(a, b, c, d)
+
+#view matrix
+mat
+
+dist(mat, method="euclidean")
+dist(mat, method="manhattan")
+dist(mat, method="minkowski")
 
 # generate matrices
 set.seed(50)
@@ -352,7 +367,7 @@ classify_uniq = function(p_values){
 #' Every numeric column is scaled.
 #' 
 #' @param tib
-#' @param dist_method: 'euclidean','mahalanobis','manhattan', 'minkowski'
+#' @param dist_method: 'euclidean','mahalanobis','manhattan', 'minkowski', 'canberra'
 #' @return tib with uniqueness
 dist_uniq = function(tib, dist_method, scale_cols=T, impute_na=F){
   print(paste('dist_uniq', nrow(tib), ncol(tib), dist_method))
@@ -366,7 +381,7 @@ dist_uniq = function(tib, dist_method, scale_cols=T, impute_na=F){
     # scale input variables mean + sd
     tib = tib %>% mutate_if(is.numeric, scale)
   }
-  stopifnot(dist_method %in% c('euclidean','mahalanobis','manhattan', 'minkowski'))
+  stopifnot(dist_method %in% c('euclidean','manhattan', 'minkowski','canberra','mahalanobis'))
   
   # check memory limit for distance matrix
   max_matrix_sz = 1e8
@@ -377,13 +392,12 @@ dist_uniq = function(tib, dist_method, scale_cols=T, impute_na=F){
     tib = tib %>% sample_n(sample_rows)
   }
   # calculate distances
+  num_tib = tib %>% select_if(is.numeric)
   if (dist_method == 'mahalanobis'){
     # tolerance has to be set to avoid rounding errors
-    num_tib = tib %>% select_if(is.numeric)
     sum_dists = mahalanobis(num_tib, colMeans(num_tib, na.rm = T), 
                             cov(num_tib, use="complete.obs"), tol=1e-20)
   } else {
-    num_tib = tib %>% select_if(is.numeric)
     # all other distances
     sum_dists = rowSums(as_tibble(as.matrix(dist(num_tib, 
                     diag = T, upper = T, method = dist_method))))
@@ -393,14 +407,20 @@ dist_uniq = function(tib, dist_method, scale_cols=T, impute_na=F){
   utib$sum_dists_z = zscore(sum_dists)
   # calculate p value of z score: 
   # we are interested to check if an observation is higher than expected (lower.tail=F) 
-  utib$sum_dists_z_p = pnorm(q=utib$sum_dists_z, mean = mean(utib$sum_dists_z), 
-                 sd = sd(utib$sum_dists_z), lower.tail=F)
+  utib$sum_dists_z_p = pnorm(q=utib$sum_dists_z, mean = mean(utib$sum_dists_z, na.rm=T), 
+                 sd = sd(utib$sum_dists_z, na.rm=T), lower.tail=F)
   utib$sum_dists_class = classify_uniq(utib$sum_dists_z_p)
   # discarded p values
   #utib$sum_dists_z_p = 2*pnorm(q=utib$sum_dists_z, lower.tail=FALSE)
   #utib$sum_dists_pvalue <- pchisq(utib$sum_dists_z, df=ncol(tib), lower.tail=F)
   utib$dist_method = dist_method
-  as_tibble(utib)
+  # check results
+  n_na = sum(is.na(utib$sum_dists_class))
+  if (n_na > 0){
+    warning(paste('distances could not be calculated for',n_na,
+                  'cases. Set impute_na to TRUE to impute missing values.'))
+  }
+  as_tibble(utib) %>% arrange(-sum_dists_z)
 }
 
 #' Main function to calculate uniqueness 
@@ -783,7 +803,7 @@ lnd_boro_u_maha = dist_uniq(lnd_boro %>% st_drop_geometry(), 'mahalanobis', impu
 openxlsx::write.xlsx(lnd_boro_u %>% mutate_if(is.numeric, round, 4), 'analysis/london_boroughs_uniqueness.xlsx')
 ```
 
-### Visualise uniqueness
+### Analyse and viz uniqueness
 
 Based on https://mharinga.github.io/choropleth.html (accessed in May 2022).
 
@@ -830,6 +850,12 @@ Select countries with at least 1 million people:
 wb_geo = read_sf("data/world_bank/indicators_by_year/world_bank_indicators_countries-2019.geojson") %>% filter(!is.na(iso3c) & sp.pop.totl >= 1e6)
 names(wb_geo)
 nrow(wb_geo)
+stopifnot(is_unique(wb_geo$iso_a3))
+stopifnot(is_unique(wb_geo$iso_a2))
+
+# use Winkel Tripel for visualisations
+crs_wintri <- "+proj=wintri +datum=WGS84 +no_defs +over"
+wb_geo <- st_transform(wb_geo, crs = crs_wintri)
 ```
 
 ```{r}
@@ -843,7 +869,7 @@ wb_tib = wb_geo %>% st_drop_geometry() %>% rename(
   internet_access = it.net.user.zs,
   military_exp = ms.mil.xpnd.gd.zs
 ) %>% select(iso_a2, iso_a3, name, region_un, population, pop_growth, gdp,
-             urban_pop, income_group, internet_access, military_exp)
+             urban_pop, internet_access, military_exp) # income_group, 
 
 wb_tib %>% sample_n(10)
 ```
@@ -878,18 +904,98 @@ ggplot(gather(wb_trans_tib %>% select_if(is.numeric)), aes(value)) +
 ### Calc uniqueness
 
 ```{r}
+#meth = 'mahalanobis'
+meth = 'manhattan'
+#meth = 'euclidean'
+wb_uniq = dist_uniq(wb_trans_tib, meth, impute_na = T)
 
-wb_uniq = dist_uniq(wb_trans_tib, 'euclidean')
-#View(wb_uniq)
+summary(wb_uniq)
 
-#TODO: visualise
+wb_uniq %>% head(20)
 ```
+
+### Analyse and viz uniqueness
+
+Based on https://r-spatial.github.io/sf/articles/sf5.html
+
+```{r}
+# correlations
+wb_uniq %>% select_if(is.numeric) %>% correlate(method='kendall') %>% stretch() %>% filter(x=='sum_dists') %>% arrange(-r)
+
+# plot distributions
+ggplot(gather(wb_uniq %>% select_if(is.numeric) %>% 
+                select(sum_dists, sum_dists_z, sum_dists_z_p)), 
+    aes(value)) + 
+    geom_histogram(bins = 20) + 
+    facet_wrap(~key, scales = 'free_x')
+
+# maps
+wb_uniq_geo = merge(wb_geo %>% select(iso_a3), wb_uniq, by='iso_a3')
+
+for (col in c('sum_dists','sum_dists_z','sum_dists_class')){
+  plot(wb_uniq_geo[col], border=NA)
+}
+
+#tm_shape(wb_uniq_geo) + tm_polygons("sum_dists_z", legend.hist = TRUE)
+```
+
 
 ## EU (Eurostat data)
 
+### Prep data
 
 ```{r}
+eu_geo = read_sf("data/eurostat/eu_vars_with_bounds/eu_nuts_2_eurostat_2018.geojson")
+summary(eu_geo)
 
+# get more variables
+#eu_tib = read_tsv('data/eurostat/eu_all_geo_data.tsv')
+#summary(eu_tib)
+
+eu_geo = eu_geo %>% select(NUTS_ID, CNTR_CODE, NUTS_NAME, region_population, life_expectancy_t, region_gdp, unemployment_rate_t)
+
+eu_geo %>% sample_n(10)
 ```
 
+Transform variables
+
+```{r}
+eu_geo %>% select_if(is.numeric) %>% st_drop_geometry() %>% correlate(method='kendall', use="na.or.complete") %>% stretch() %>% arrange(-r)
+
+# plot distributions
+ggplot(gather(eu_geo %>% st_drop_geometry() %>% select_if(is.numeric)), 
+    aes(value)) + 
+    geom_histogram(bins = 20) + 
+    facet_wrap(~key, scales = 'free_x')
+
+# transform 
+eu_trans_geo = eu_geo %>% mutate(region_population = log10(region_population+1),
+  region_gdp = log10(region_gdp+1), 
+  unemployment_rate_t = log10(unemployment_rate_t+1))
+
+ggplot(gather(eu_trans_geo %>% st_drop_geometry() %>% select_if(is.numeric)), 
+    aes(value)) + 
+    geom_histogram(bins = 20) + 
+    facet_wrap(~key, scales = 'free_x')
+```
+
+### Calc uniqueness
+
+```{r}
+method = 'euclidean'
+eu_uniq = dist_uniq(eu_trans_geo %>% st_drop_geometry(), method)
+
+eu_uniq %>% head(20) # %>% View(.)
+```
+
+Maps
+
+```{r}
+# maps
+eu_uniq_geo = merge(eu_geo %>% select(NUTS_ID), eu_uniq, by='NUTS_ID')
+
+for (col in c('sum_dists','sum_dists_z','sum_dists_class')){
+  plot(eu_uniq_geo[col], border=NA)
+}
+```
 End of notebook
