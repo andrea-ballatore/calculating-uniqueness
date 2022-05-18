@@ -86,6 +86,130 @@ generate_gaussian_mix <- function(n_clusters, centres_list, sizes_list){
   mix
 }
 
+
+#' Descriptive statistics
+#' @return tibble with a row with descriptive stats about x (z scores).
+desc_stats_uniq <- function(utib){
+  x = utib$sum_dists_z
+  shap_x = x
+  if (nrow(utib) > 5000){
+    shap_x = sample(utib, 5000)
+  }
+  
+  uclasses = table(utib$sum_dists_class)/nrow(utib)*100
+  
+  tibble(
+    n = length(x),
+    min = min(x),
+    med = median(x),
+    mean = mean(x),
+    max = max(x),
+    pc_very_common = uclasses['very common'],
+    pc_common = uclasses['common'],
+    pc_inbet = uclasses['medium'],
+    pc_rare = uclasses['rare'],
+    pc_very_rare = uclasses['very rare'],
+    skewness = round(skewness(x),3),
+    iqr = round(IQR(x),3),
+    shapiro_w = shapiro.test(shap_x)$stat,
+    shapiro_p = round(shapiro.test(shap_x)$p,5)
+  )
+}
+
+#' Find a sample size to produce a distance matrix that is manageable in memory
+find_sample_sz = function(n_row, n_col, max_dist_size){
+  while(((n_col*n_row)^2) > max_dist_size){
+    n_row = n_row - 1
+  }
+  return(n_row)
+}
+
+#' Classify p values returned by the uniqueness function with a 
+#' human readable label.
+classify_uniq = function(p_values){
+  breaks = c(0, .001, .01, .05, .1, Inf)
+  labels = c('very rare','rare','medium','common','very common')
+  classif = cut(p_values, breaks, labels)
+  #print(summary(classif)/length(p_values)*100)
+  return(classif)
+}
+
+#' Classify p values returned by the uniqueness function with a 
+#' human readable label.
+classify_p_values = function(p_values){
+  breaks = c(0, .001, .01, .05, .1, Inf)
+  labels = c('***','**','*','.','')
+  classif = cut(p_values, breaks, labels)
+  #print(summary(classif)/length(p_values)*100)
+  return(classif)
+}
+
+#' Calculate uniqueness based on distance in multi-dimensional space.
+#' Every numeric column is scaled.
+#' 
+#' @param tib
+#' @param dist_method: 'euclidean','mahalanobis','manhattan', 'minkowski', 'canberra'
+#' @return tib with uniqueness
+dist_uniq = function(tib, dist_method, scale_cols=T, impute_na=F){
+  print(paste('dist_uniq', nrow(tib), ncol(tib), dist_method))
+  if (impute_na){
+    print('imputing missing values...')
+    # impute missing values
+    tib = impute_numeric_cols_median(tib)
+  }
+  if (scale_cols){
+    print('scaling data...')
+    # scale input variables mean + sd
+    tib = tib %>% mutate_if(is.numeric, scale)
+  }
+  stopifnot(dist_method %in% c('euclidean','manhattan', 'minkowski','canberra','mahalanobis'))
+  
+  # check memory limit for distance matrix
+  max_matrix_sz = 1e8
+  #print(dim(tib))
+  sample_rows = find_sample_sz(nrow(tib), ncol(tib), max_matrix_sz)
+  if (nrow(tib) > sample_rows){
+    warning(paste("Distance matrix would be too large, using a sample N =",sample_rows))
+    tib = tib %>% sample_n(sample_rows)
+  }
+  # calculate distances
+  num_tib = tib %>% select_if(is.numeric)
+  if (dist_method == 'mahalanobis'){
+    # tolerance has to be set to avoid rounding errors
+    sum_dists = mahalanobis(num_tib, colMeans(num_tib, na.rm = T), 
+                            cov(num_tib, use="complete.obs"), tol=1e-20)
+  } else {
+    # all other distances
+    sum_dists = rowSums(as_tibble(as.matrix(dist(num_tib, 
+                                                 diag = T, upper = T, method = dist_method))))
+  }
+  utib = tib
+  # sum of distances
+  utib$sum_dists = sum_dists
+  # deciles
+  utib$sum_dists_dec = ntile(-utib$sum_dists, 10)
+  # z score of distances
+  utib$sum_dists_z = as.numeric(zscore(sum_dists))
+  # calculate p value of z score: 
+  # we are interested to check if an observation is higher than expected (lower.tail=F) 
+  utib$sum_dists_z_p = pnorm(q=utib$sum_dists_z, mean = mean(utib$sum_dists_z, na.rm=T), 
+                             sd = sd(utib$sum_dists_z, na.rm=T), lower.tail=F)
+  utib$sum_dists_class = classify_uniq(utib$sum_dists_z_p)
+  utib$sum_dists_p_thresh = classify_p_values(utib$sum_dists_z_p)
+  
+  # discarded p values
+  #utib$sum_dists_z_p = 2*pnorm(q=utib$sum_dists_z, lower.tail=FALSE)
+  #utib$sum_dists_pvalue <- pchisq(utib$sum_dists_z, df=ncol(tib), lower.tail=F)
+  utib$dist_method = dist_method
+  # check results
+  n_na = sum(is.na(utib$sum_dists_class))
+  if (n_na > 0){
+    warning(paste('distances could not be calculated for',n_na,
+                  'cases. Set impute_na to TRUE to impute missing values.'))
+  }
+  as_tibble(utib) %>% arrange(-sum_dists_z)
+}
+
 #' Impute NAs in all numeric columns in tib
 impute_numeric_cols_median = function(tib){
   tib %>% mutate_if(is.numeric, 
@@ -94,15 +218,6 @@ impute_numeric_cols_median = function(tib){
 
 #' @return TRUE if vector x is unique
 is_unique <- function(x){ return(!any(duplicated(x))) }
-
-
-
-#' 
-OLD_plot_scaled_variable_matrix = function(tib){
-  tib_num = tib %>% arrange(-sum_dists) %>% st_drop_geometry() %>% select(-sum_dists, -sum_dists_p_thresh)
-  ggplot(dt2, aes(x = rowname, y = colname, fill = value)) +
-  geom_tile()
-}
 
 #' Plots uniqueness maps using `tmap` package.
 plot_uniq_map = function(uniq_geo){
