@@ -1,7 +1,7 @@
 ---
 title: "Calculating uniqueness"
 author: "Andrea Ballatore"
-date: "27/05/2022"
+date: "26/04/2023"
 output: 
   html_document: 
     toc: yes
@@ -499,14 +499,6 @@ res_dunn
 ```
 
 # Case studies
-
-## London (land use and POIs)
-
-TODO
-
-```{r}
-
-```
 
 ## London boroughs
 
