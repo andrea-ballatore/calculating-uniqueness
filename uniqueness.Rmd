@@ -376,7 +376,7 @@ Different distributions generate different common/rare distribution.
 Uniform and normally-distributed data generate a similar pattern, with normal data with more having more rare/very rare observations (2%, 1.1%).
 Uneven distributions with groups, as expected by their design, generate more rare/very rare observations (4.1% and 7.3%), having a large central group of close observations and relatively many distant observations:
 
-Using the Dunn's test, the only two distributions that are not significantly different are the normal and the uniform, which generate similar uniqueness patterns (TODO: why?).
+Using the Dunn's test, the only two distributions that are not significantly different are the normal and the uniform, which generate similar uniqueness patterns.
 
 ```{r}
 # impact of data distribution
@@ -597,7 +597,11 @@ Calculate uniqueness of boroughs based on all variables.
 # filter out very rare
 #lnd_boro = lnd_boro %>% filter(!(id %in% c('E09000001','E09000020')))
 
-method = 'euclidean'
+#method = 'euclidean'
+method = 'mahalanobis'
+#method = 'manhattan'
+
+#lnd_boro$pop_born_abroad = impute_na(lnd_boro, "pop_born_abroad", "mle")
 lnd_boro_uniq = dist_uniq(lnd_boro %>% st_drop_geometry(), method)
 #lnd_boro_u_man = dist_uniq(lnd_boro %>% st_drop_geometry(), 'manhattan')
 #lnd_boro_u_mink = dist_uniq(lnd_boro %>% st_drop_geometry(), 'minkowski')
@@ -620,8 +624,11 @@ lnd_boro_uniq_geo = merge(lnd_boro %>% select(id), lnd_boro_uniq)
 plot_uniq_map(lnd_boro_uniq_geo)
 
 # heatmaps
-gen_variable_heatmap(lnd_boro_uniq_geo, T, 50)
-gen_variable_heatmap(lnd_boro_uniq_geo, F, 50)
+p = gen_variable_heatmap(lnd_boro_uniq_geo, T, 50)
+ggsave('figures/london_var_heatmap.pdf', p, width = 5, height = 5.5)
+
+p = gen_variable_heatmap(lnd_boro_uniq_geo, F, 50)
+ggsave('figures/london_var_heatmap1.pdf', p, width = 5, height = 5)
 
 # choropleth
 # Based on <https://mharinga.github.io/choropleth.html> (accessed in May 2022).

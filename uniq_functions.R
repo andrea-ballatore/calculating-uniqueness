@@ -175,9 +175,10 @@ dist_uniq = function(tib, dist_method, scale_cols=T, impute_na=F){
   # calculate distances
   num_tib = tib %>% select_if(is.numeric)
   if (dist_method == 'mahalanobis'){
+    #View(num_tib)
     # tolerance has to be set to avoid rounding errors
-    sum_dists = mahalanobis(num_tib, colMeans(num_tib, na.rm = T), 
-                            cov(num_tib, use="complete.obs"), tol=1e-20)
+    sum_dists = mahalanobis(num_tib, colMeans(num_tib, na.rm = T),
+                            cov(num_tib, use="pairwise.complete.obs"), tol=1e-20) # complete.obs
   } else {
     # all other distances
     sum_dists = rowSums(as_tibble(as.matrix(dist(num_tib, 
@@ -221,6 +222,7 @@ is_unique <- function(x){ return(!any(duplicated(x))) }
 
 #' Plots uniqueness maps using `tmap` package.
 plot_uniq_map = function(uniq_geo){
+  fout = 'figures/unique_plots_'
   # table with most unique rows
   #uniq_geo %>% arrange(-sum_dists) %>% head(20) %>% flextable() %>% print()
   scale_bar_sz = .4
@@ -231,32 +233,43 @@ plot_uniq_map = function(uniq_geo){
   p = tm_shape(uniq_geo) +
   tm_polygons(col = 'sum_dists',
     legend.hist = TRUE,
-    border.alpha = 0,
+    style = 'jenks',
+    border.alpha = .5,
+    border.col = 'gray',
+    palette = "OrRd", #YlGnBu, Oranges
     frame.lwd = NA, panel.label.bg.color = NA) +
   tm_layout(legend.outside = TRUE, frame = F) +   
   tm_scale_bar(text.size = scale_bar_sz, width=scale_bar_width, position = c("RIGHT", "BOTTOM"))
   print(p)
+  tmap_save(p, paste0(fout,'dists.pdf'))
   
   # distances z values
   p = tm_shape(uniq_geo) +
   tm_polygons(col = 'sum_dists_z',
     legend.hist = TRUE,
-    border.alpha = 0,
+    border.alpha = .5,
+    style='jenks',
+    border.col = 'gray',
+    palette="BrBG", # YlGnBu
     frame.lwd = NA, panel.label.bg.color = NA) +
   tm_layout(legend.outside = TRUE, frame = F) + 
   tm_scale_bar(text.size = scale_bar_sz, width=scale_bar_width, position = c("RIGHT", "BOTTOM"))
   print(p)
+  tmap_save(p, paste0(fout,'dists_z.pdf'))
   
   # classes
   p = tm_shape(uniq_geo) +
   tm_polygons(col = 'sum_dists_p_thresh',
     legend.hist = TRUE,
     #style="cat",
-    border.alpha = 0,
+    border.alpha = .5,
+    border.col = 'gray',
+    palette="-Purples",
     frame.lwd = NA, panel.label.bg.color = NA) +
   tm_layout(legend.outside = TRUE, frame = F) + 
   tm_scale_bar(text.size = scale_bar_sz, width=scale_bar_width, position = c("RIGHT", "BOTTOM"))
   print(p)
+  tmap_save(p, paste0(fout,'dists_z_th.pdf'))
 }
 
 #' Generate a variable heatmap to show the variability in the variables for the
@@ -305,4 +318,5 @@ gen_variable_heatmap = function(uniq_tib, show_head_rows=T, max_rows = 30){
     ) + theme(panel.border = element_blank(), panel.grid.major = element_blank())
   
   print(p)
+  return(p)
 }
